@@ -42,6 +42,8 @@ FS_TARGET = 250.0
 EPOCH_SECONDS = 4.0
 ALPHA_BAND = (8.0, 13.0)
 POSTERIOR_CH_HINTS = ("O", "PO", "P")
+N_PERMUTATIONS = 5000
+SPECIFICITY_THRESHOLD = 0.3
 
 
 def load_subject(sub: str) -> mne.io.BaseRaw:
@@ -102,6 +104,18 @@ def posterior_indices(raw: mne.io.BaseRaw):
     return idx
 
 
+def frontal_indices(raw: mne.io.BaseRaw):
+    """Channels starting with F but not FT/FC/FP (so F3, F4, Fz, F7, F8 etc),
+    used as the specificity control arm: the Berger effect should be posterior,
+    not frontal."""
+    idx = []
+    for i, ch in enumerate(raw.ch_names):
+        name = ch.upper()
+        if name.startswith("F") and not (name.startswith("FT") or name.startswith("FC") or name.startswith("FP")):
+            idx.append(i)
+    return idx
+
+
 def epoch_features(data: np.ndarray, fs: float) -> dict:
     """data: (n_channels, n_samples), a single epoch on posterior channels."""
     from scipy.signal import welch
@@ -129,12 +143,12 @@ def epoch_features(data: np.ndarray, fs: float) -> dict:
     }
 
 
-def block_to_epochs(raw: mne.io.BaseRaw, posterior: list, t0: float, t1: float):
+def block_to_epochs(raw: mne.io.BaseRaw, channels: list, t0: float, t1: float):
     fs = raw.info["sfreq"]
     step = int(EPOCH_SECONDS * fs)
     start_samp = int(t0 * fs)
     stop_samp = int(t1 * fs)
-    data, _ = raw[posterior, start_samp:stop_samp]
+    data, _ = raw[channels, start_samp:stop_samp]
     n = data.shape[1]
     epochs = []
     for i in range(0, n - step + 1, step):
@@ -163,58 +177,159 @@ def paired_stats(eo: list, ec: list, key: str):
     }
 
 
-def main():
+def block_level_alpha(epochs: list) -> float:
+    """Mean alpha_rel across the epochs of one block, the unit the permutation
+    test resamples (epochs within a block are not independent of each other,
+    blocks are the closest thing to an independent unit here)."""
+    vals = [e["alpha_rel"] for e in epochs]
+    return float(np.mean(vals)) if vals else float("nan")
+
+
+def cohens_d(a: np.ndarray, b: np.ndarray) -> float:
+    pooled = np.sqrt((a.var(ddof=1) + b.var(ddof=1)) / 2) + 1e-12
+    return float((b.mean() - a.mean()) / pooled)
+
+
+def block_permutation_test(block_labels: list, block_values: np.ndarray, n_perm: int, seed: int = 0):
+    """Shuffle the EO/EC block labels n_perm times and recompute Cohen's d
+    (EC minus EO) each time, to get a null distribution that respects block-
+    level (not epoch-level) independence. Two-sided p-value against the
+    observed d."""
+    labels = np.array(block_labels)
+    eo_mask = labels == "EO"
+    ec_mask = labels == "EC"
+    observed_d = cohens_d(block_values[eo_mask], block_values[ec_mask])
+
+    rng = np.random.default_rng(seed)
+    null_ds = np.empty(n_perm)
+    n = len(labels)
+    for i in range(n_perm):
+        perm = rng.permutation(n)
+        shuffled = labels[perm]
+        eo_s = shuffled == "EO"
+        ec_s = shuffled == "EC"
+        null_ds[i] = cohens_d(block_values[eo_s], block_values[ec_s])
+
+    p_value = float(np.mean(np.abs(null_ds) >= abs(observed_d)))
+    return observed_d, p_value
+
+
+def run_arm(channel_indices_fn, arm_name: str):
+    """Runs the full EO/EC contrast for one channel arm (posterior or frontal).
+    Returns (per_subject stats, pooled stats, block_labels, block_values)."""
     per_subject = {}
     all_eo, all_ec = [], []
+    block_labels, block_values = [], []
+
     for sub in SUBJECTS:
-        print(f"[{sub}] loading and preprocessing ...")
         raw = load_subject(sub)
         blocks = block_windows_from_markers(raw)
         if not blocks:
-            print(f"[{sub}]   no EO/EC blocks found in markers, skipping")
+            print(f"[{sub}]   no EO/EC blocks found in markers, skipping ({arm_name})")
             continue
-        posterior = posterior_indices(raw)
-        print(f"[{sub}]   {len(blocks)} blocks, {len(posterior)} posterior channels")
+        channels = channel_indices_fn(raw)
+        if not channels:
+            print(f"[{sub}]   no {arm_name} channels found, skipping")
+            continue
 
         eo_epochs, ec_epochs = [], []
         for label, t0, t1 in blocks:
-            epochs = block_to_epochs(raw, posterior, t0, t1)
+            epochs = block_to_epochs(raw, channels, t0, t1)
+            if not epochs:
+                continue
             (eo_epochs if label == "EO" else ec_epochs).extend(epochs)
+            block_labels.append(label)
+            block_values.append(block_level_alpha(epochs))
 
         stats = {k: paired_stats(eo_epochs, ec_epochs, k) for k in
                  ["alpha_rel", "alpha_abs_uv2", "aperiodic_exponent", "lempel_ziv", "dfa_alpha"]}
         per_subject[sub] = stats
         all_eo.extend(eo_epochs)
         all_ec.extend(ec_epochs)
-        print(f"[{sub}]   alpha_rel EO->EC: {stats['alpha_rel']['mean_EO']:.3f} -> "
-              f"{stats['alpha_rel']['mean_EC']:.3f} (d={stats['alpha_rel']['cohens_d']:.2f}, "
-              f"p={stats['alpha_rel']['p_value']:.2e})")
+        if stats["alpha_rel"] is not None:
+            print(f"[{sub}] ({arm_name}) alpha_rel EO->EC: {stats['alpha_rel']['mean_EO']:.3f} -> "
+                  f"{stats['alpha_rel']['mean_EC']:.3f} (d={stats['alpha_rel']['cohens_d']:.2f}, "
+                  f"p={stats['alpha_rel']['p_value']:.2e})")
 
     pooled = {k: paired_stats(all_eo, all_ec, k) for k in
               ["alpha_rel", "alpha_abs_uv2", "aperiodic_exponent", "lempel_ziv", "dfa_alpha"]}
 
-    berger_pass = (
-        pooled["alpha_rel"] is not None
-        and pooled["alpha_rel"]["mean_EC"] > pooled["alpha_rel"]["mean_EO"]
-        and pooled["alpha_rel"]["p_value"] < 0.05
-        and pooled["alpha_rel"]["cohens_d"] > 0.5
+    return per_subject, pooled, block_labels, np.array(block_values, dtype=float)
+
+
+def main():
+    print("Running posterior arm (primary) ...")
+    posterior_per_subject, posterior_pooled, block_labels, block_values = run_arm(posterior_indices, "posterior")
+
+    print("\nRunning frontal arm (specificity control) ...")
+    frontal_per_subject, frontal_pooled, _frontal_block_labels, _frontal_block_values = run_arm(
+        frontal_indices, "frontal"
+    )
+
+    d_posterior = posterior_pooled["alpha_rel"]["cohens_d"] if posterior_pooled["alpha_rel"] else float("nan")
+    d_frontal = frontal_pooled["alpha_rel"]["cohens_d"] if frontal_pooled["alpha_rel"] else float("nan")
+    d_diff = d_posterior - d_frontal
+    specificity_pass = bool(d_diff > SPECIFICITY_THRESHOLD)
+
+    print(f"\nSpecificity: d_posterior={d_posterior:.3f}, d_frontal={d_frontal:.3f}, "
+          f"diff={d_diff:.3f} (threshold {SPECIFICITY_THRESHOLD}) -> "
+          f"{'PASS' if specificity_pass else 'FAIL'}")
+
+    print(f"\nRunning block-level permutation test ({N_PERMUTATIONS} permutations, "
+          f"{len(block_labels)} blocks) ...")
+    observed_block_d, perm_p_value = block_permutation_test(block_labels, block_values, N_PERMUTATIONS, seed=0)
+    print(f"  observed block-level d: {observed_block_d:.3f}, permutation p: {perm_p_value:.4f}")
+
+    gate0_pass = (
+        posterior_pooled["alpha_rel"] is not None
+        and posterior_pooled["alpha_rel"]["mean_EC"] > posterior_pooled["alpha_rel"]["mean_EO"]
+        and perm_p_value < 0.05
+        and d_posterior > 0.5
+        and specificity_pass
     )
 
     out = {
         "gate0_berger_reproduction": {
-            "hypothesis": "posterior relative alpha (8-13 Hz) is higher during eyes-closed than eyes-open",
-            "pooled_across_subjects": pooled,
-            "per_subject": per_subject,
-            "pass": bool(berger_pass),
+            "hypothesis": "posterior relative alpha (8-13 Hz) is higher during eyes-closed than eyes-open, "
+                           "and this effect is specific to posterior channels (not frontal)",
+            "posterior_stats": {
+                "pooled_across_subjects": posterior_pooled,
+                "per_subject": posterior_per_subject,
+            },
+            "frontal_stats": {
+                "pooled_across_subjects": frontal_pooled,
+                "per_subject": frontal_per_subject,
+            },
+            "specificity": {
+                "d_posterior": d_posterior,
+                "d_frontal": d_frontal,
+                "d_posterior_minus_frontal": d_diff,
+                "threshold": SPECIFICITY_THRESHOLD,
+                "pass": specificity_pass,
+            },
+            "block_permutation": {
+                "p_value": perm_p_value,
+                "n_permutations": N_PERMUTATIONS,
+                "observed_d": observed_block_d,
+                "n_blocks": len(block_labels),
+                "note": "primary significance test: block-level label shuffle, respects block "
+                        "(not epoch) independence",
+            },
+            "mannwhitney_note": "Mann-Whitney U above (per_subject / pooled_across_subjects.alpha_rel.p_value) "
+                                 "assumes epoch independence within a block, which does not hold here. "
+                                 "It is reported for continuity with the original Gate 0 run, not as the "
+                                 "primary significance test.",
+            "pass": bool(gate0_pass),
             "criteria": {
-                "direction": "mean_EC > mean_EO on alpha_rel",
-                "significance": "p < 0.05 (Mann-Whitney U, two-sided)",
-                "effect_size": "Cohens d > 0.5",
+                "direction": "mean_EC > mean_EO on posterior alpha_rel",
+                "significance": "block-permutation p < 0.05 (primary; 5000 permutations)",
+                "effect_size": "posterior Cohens d > 0.5",
+                "specificity": f"d_posterior - d_frontal > {SPECIFICITY_THRESHOLD}",
             },
         },
         "provenance": make_provenance(
             dataset_id="lemon-ds000221-subset-2subjects",
-            config={"script": "validate_lemon_berger.py", "version": "v0"},
+            config={"script": "validate_lemon_berger.py", "version": "v1-specificity"},
         ).__dict__,
         "generated_utc": datetime.now(timezone.utc).isoformat(),
     }
@@ -223,11 +338,12 @@ def main():
     out_path.parent.mkdir(exist_ok=True)
     out_path.write_text(json.dumps(out, indent=2))
     print(f"\nWrote {out_path}")
-    print(f"Gate 0 (Berger effect reproduction): {'PASS' if berger_pass else 'FAIL'}")
-    print(f"  alpha_rel EO: {pooled['alpha_rel']['mean_EO']:.4f}")
-    print(f"  alpha_rel EC: {pooled['alpha_rel']['mean_EC']:.4f}")
-    print(f"  Cohens d: {pooled['alpha_rel']['cohens_d']:.2f}")
-    print(f"  p-value: {pooled['alpha_rel']['p_value']:.2e}")
+    print(f"Gate 0 (Berger effect reproduction, with specificity + permutation): "
+          f"{'PASS' if gate0_pass else 'FAIL'}")
+    print(f"  alpha_rel EO (posterior): {posterior_pooled['alpha_rel']['mean_EO']:.4f}")
+    print(f"  alpha_rel EC (posterior): {posterior_pooled['alpha_rel']['mean_EC']:.4f}")
+    print(f"  d_posterior: {d_posterior:.3f}, d_frontal: {d_frontal:.3f}, diff: {d_diff:.3f}")
+    print(f"  block-permutation p: {perm_p_value:.4f}")
 
 
 if __name__ == "__main__":
