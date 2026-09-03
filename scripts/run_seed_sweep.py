@@ -19,8 +19,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from cessation_manifold.pipeline import load_config, run_synthetic_pipeline
 
-N_SEEDS = 20
-N_BOOTSTRAP = 1000
+import os
+
+N_SEEDS = int(os.environ.get("N_SEEDS", "10"))
+N_BOOTSTRAP = int(os.environ.get("N_BOOTSTRAP", "1000"))
 METRICS = [
     "gate1_within_subject_ratio",
     "gate3_surrogate_mean_distance",
@@ -46,18 +48,63 @@ def main():
     per_seed = {m: [] for m in METRICS}
     per_seed_results = []
 
-    for seed in range(N_SEEDS):
-        print(f"seed {seed} ...")
+    Path("results").mkdir(exist_ok=True)
+    checkpoint_path = Path("results/seed_sweep.json")
+    partial_path = Path("results/seed_sweep_partial.jsonl")
+
+    completed_seeds = set()
+    if checkpoint_path.exists():
+        try:
+            prev = json.loads(checkpoint_path.read_text())
+            for row in prev.get("per_seed", []):
+                if row.get("status") == "complete":
+                    per_seed_results.append(row)
+                    completed_seeds.add(row["seed"])
+                    for m in METRICS:
+                        per_seed[m].append(row[m])
+            print(f"Resuming: {len(completed_seeds)} seeds already checkpointed.", flush=True)
+        except Exception:
+            pass
+    else:
+        partial_path.write_text("")
+
+    def write_checkpoint(status: str):
+        summary_partial = {}
+        for m in METRICS:
+            if per_seed[m]:
+                arr = np.array(per_seed[m], dtype=float)
+                summary_partial[m] = {"mean": float(arr.mean()), "n": len(arr)}
+        checkpoint_path.write_text(json.dumps({
+            "status": status,
+            "n_seeds_target": N_SEEDS,
+            "n_seeds_done": len(per_seed_results),
+            "summary_partial": summary_partial,
+            "per_seed": per_seed_results,
+        }, indent=2, default=str))
+
+    try:
+        from tqdm import tqdm
+        iterator = tqdm([s for s in range(N_SEEDS) if s not in completed_seeds],
+                        desc="seeds", unit="seed", initial=len(completed_seeds), total=N_SEEDS)
+    except ImportError:
+        iterator = [s for s in range(N_SEEDS) if s not in completed_seeds]
+
+    for seed in iterator:
         result = run_synthetic_pipeline(config, seed=seed)
         row = {m: result[m] for m in METRICS}
         row["seed"] = seed
+        row["status"] = "complete"
         per_seed_results.append(row)
         for m in METRICS:
             per_seed[m].append(result[m])
+        with partial_path.open("a") as f:
+            f.write(json.dumps(row) + "\n")
+        write_checkpoint("in_progress")
         print(f"  gate1_ratio={row['gate1_within_subject_ratio']:.3f} "
               f"gate3_surr={row['gate3_surrogate_mean_distance']:.3f} "
               f"gate3_real={row['gate3_real_mean_distance']:.3f} "
-              f"gate4_coverage={row['gate4_conformal_coverage']:.3f}")
+              f"gate4_coverage={row['gate4_conformal_coverage']:.3f}",
+              flush=True)
 
     summary = {}
     for m in METRICS:
@@ -83,7 +130,7 @@ def main():
     out_path.parent.mkdir(exist_ok=True)
     out_path.write_text(json.dumps(out, indent=2, default=str))
 
-    print("\nSummary (mean, 95% CI over 20 seeds):")
+    print(f"\nSummary (mean, 95% CI over {N_SEEDS} seeds):")
     for m in METRICS:
         s = summary[m]
         print(f"  {m}: {s['mean']:.3f} [{s['ci95_lo']:.3f}, {s['ci95_hi']:.3f}] "

@@ -72,10 +72,10 @@ See `PREREGISTRATION.md` for full rationale.
 
 | Gate | Check | v0 status |
 |------|-------|-----------|
-| 1 | Within-subject reproducibility across repeated sessions | Runs and reported on synthetic. |
+| 1 | Within-subject reproducibility across repeated sessions | **FAILS across the 10-seed sweep** (see below). Single-seed demo hid this; the current 0.6 threshold is wrong for this apparatus, or the manifold is not actually subject-stable. Honest failure surfaced by Finding 3. |
 | 2 | Non-meditator controls sit further from the manifold than meditator baseline | Partial. Real controls (LEMON) can be passed in; a real meditator arm needs Zarka or NIMHANS data. |
 | 3 | IAAFT / phase-randomized surrogate EEG breaks the score | Runs and reported on synthetic (surrogate mean 2.63 > real 2.01). |
-| 4 | Split-conformal intervals hold nominal coverage; abstain when they don't | Runs on synthetic. **v0 fix (council-review Finding 1):** target changed from manifold distance (self-derived from features, gave the leaky 1.0 coverage of the initial commit) to per-epoch collapse fraction (independent label). Single-seed coverage now 0.93 vs 0.9 target. Multi-seed sweep numbers in `results/seed_sweep.json` (20 seeds, 95% bootstrap CI). |
+| 4 | Split-conformal intervals hold nominal coverage; abstain when they don't | **v0 fix (Finding 1):** target changed from manifold distance (leaky, gave 1.0) to per-epoch collapse fraction (independent). Sweep-mean coverage 0.93 [0.85, 0.99] over 10 seeds. Passes on average, but bounces {min 0.667, max 1.000}. Wide per-seed variance is itself a finding: this test-set size (~n=15) is not enough for calibrated split-conformal on this noise level. |
 
 Run `python scripts/run_demo.py` and see `results/report.html` for the
 current numbers in your environment.
@@ -107,6 +107,37 @@ scripts/        fetch_lemon_subset.sh, fetch_openneuro_ds001787.sh, validate_lem
 configs/        synthetic.yaml, lemon.yaml, openneuro_meditation.yaml
 data/README.md  dataset table with real URLs, licenses, and reachability notes
 ```
+
+## 10-seed sweep summary (Finding 3)
+
+Mean and bootstrap 95% CI over 10 seeds (`scripts/run_seed_sweep.py`,
+default `N_SEEDS=10`; set env var `N_SEEDS=20` for the full sweep):
+
+| Metric | mean | 95% CI | min | max | pass criterion | verdict |
+|---|---|---|---|---|---|---|
+| gate1_within_subject_ratio | 0.885 | [0.832, 0.932] | 0.686 | 0.971 | < 0.6 | **FAIL every seed** |
+| gate3_surrogate_mean_distance | 2.500 | [2.404, 2.603] | 2.179 | 2.811 | > gate3_real x 1.2 | PASS every seed |
+| gate3_real_mean_distance | 1.792 | [1.668, 1.936] | 1.547 | 2.274 | (contrast for gate 3) | PASS every seed |
+| gate4_conformal_coverage | 0.927 | [0.853, 0.987] | 0.667 | 1.000 | close to 0.9 | mean OK, per-seed variance is a real finding |
+
+Two honest failures the single-seed run hid:
+
+1. **Gate 1 fails on every seed.** The current 0.6 threshold is not achieved
+   on any run. Either the threshold is wrong (needs a documented recalibration
+   on synthetic before real data touches this) or the PCA + UMAP manifold
+   here is not actually subject-stable across the 3 synthetic sessions per
+   subject. The correct next step is to widen the manifold anchor
+   (more subjects, more sessions) and re-derive the threshold, not to relax
+   the current one to pass.
+2. **Gate 4 coverage bounces 0.667 to 1.000 across seeds.** Mean lands at
+   0.93 (nominal 0.9 is inside the CI), so the abstract calibration story
+   holds on average, but any single run can undershoot substantially. Root
+   cause is a small test fold (~15 epochs); expanding the calibration + test
+   folds is the honest fix before this gate can be reported as reliably passing.
+
+Neither is fatal for v0's apparatus goals; both are exactly the failures
+Finding 3 was designed to surface. Real cessation data cannot land until
+these are resolved.
 
 ## Honest limits of v0
 
