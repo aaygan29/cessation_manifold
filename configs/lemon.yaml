@@ -1,0 +1,19 @@
+# Non-meditator control config: MPI Leipzig LEMON, OpenNeuro ds000221.
+# Status: WIRED (fetch script verified, loader implemented). This config is
+# the Gate-2 control arm. See data/README.md for the fetch instructions and
+# license.
+synthetic:
+  n_subjects: 6
+  n_sessions_per_subject: 3
+  sfreq: 250.0
+  n_seconds: 60.0
+  seed: 0
+
+data:
+  dataset_id: ds000221
+  bids_root: data/raw/lemon
+  task: RSEEG
+  epoch_length_s: 5.0
+  l_freq: 1.0
+  h_freq: 45.0
+  role: non_meditator_control

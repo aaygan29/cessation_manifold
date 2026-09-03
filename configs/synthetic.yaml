@@ -1,0 +1,6 @@
+synthetic:
+  n_subjects: 4
+  n_sessions_per_subject: 3
+  sfreq: 250.0
+  n_seconds: 30.0
+  seed: 0

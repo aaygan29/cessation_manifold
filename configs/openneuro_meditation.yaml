@@ -1,0 +1,18 @@
+# Real meditation-EEG config: OpenNeuro ds001787 ("EEG meditation study").
+# Status: dataset existence and BIDS-root path verified reachable via the
+# OpenNeuro GraphQL API. NOT YET wired end-to-end into the manifold/conformal
+# steps in pipeline.py: that dataset does not annotate cessation-onset events
+# (it periodically probes concentration/mind-wandering, not discrete
+# cessation), so it cannot anchor the cessation centroid the way the
+# synthetic collapse mask does. It is fetchable today and useful once a
+# labeling scheme (or the Zarka/NIMHANS data) is available. Treated as
+# not-yet-wired per the repo's honesty rules; do not report gate results
+# from this config until that labeling step exists.
+data:
+  dataset_id: ds001787
+  bids_root: data/raw/openneuro_meditation
+  task: meditation
+  epoch_length_s: 5.0
+  l_freq: 1.0
+  h_freq: 45.0
+  role: real_meditation_eeg_unlabeled_for_cessation

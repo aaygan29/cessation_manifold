@@ -1,0 +1,19 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "cessation_manifold: a per-subject distance-from-cessation EEG readout"
+authors:
+  - family-names: Gandhi
+    given-names: Aayush
+version: 0.1.0
+date-released: "2026-09-03"
+repository-code: "https://github.com/aaygan29/cessation_manifold"
+license: MIT
+references:
+  - type: article
+    title: "Cessation of consciousness in meditation: a neurophysiological investigation"
+    authors:
+      - family-names: Zarka
+        given-names: D.
+    year: 2026
+    journal: bioRxiv
+    url: "https://www.biorxiv.org/content/10.64898/2026.02.10.705005v1.full"
