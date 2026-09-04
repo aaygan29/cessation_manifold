@@ -22,6 +22,7 @@ from .embed.manifold import fit_manifold, transform
 from .embed.distance import distance_from_cessation
 from .honesty.conformal import fit_split_conformal, empirical_coverage
 from .honesty.gates import gate, UnvalidatedClaimError
+from .honesty.icc import gate1_icc
 
 
 def load_config(path: str) -> dict:
@@ -103,7 +104,10 @@ def run_synthetic_pipeline(config: dict, seed: int | None = None) -> dict:
     model, Xr = fit_manifold(X, all_labels, feature_names, seed=seed)
     dist = distance_from_cessation(Xr, model.cessation_centroid)
 
-    # per-subject, per-session mean distance on cessation epochs: gate1 check
+    # Gate 1: within-subject reproducibility across sessions, quantified as
+    # ICC(2,1) on per-session mean distance (Koo & Li 2016 J Chiropr Med
+    # 15(2):155-163: > 0.5 moderate, > 0.75 good). Pass requires point > 0.5
+    # AND permutation-null p < 0.05. Old ad-hoc ratio kept as diagnostic only.
     import pandas as pd
 
     df = pd.DataFrame(
@@ -111,10 +115,13 @@ def run_synthetic_pipeline(config: dict, seed: int | None = None) -> dict:
     )
     cess_df = df[df["label"]]
     session_means = cess_df.groupby(["subject", "session"])["distance"].mean().reset_index()
+
+    pivot = session_means.pivot(index="subject", columns="session", values="distance")
+    icc_result = gate1_icc(pivot.values, n_perm=200, moderate_threshold=0.5, seed=seed)
+
     subj_std = session_means.groupby("subject")["distance"].std().fillna(0.0)
     overall_scale = session_means["distance"].std() + 1e-9
-    gate1_ratio = float((subj_std / overall_scale).mean())
-    gate1_pass = bool(gate1_ratio < 0.6)  # within-subject spread should be well below overall spread
+    diag_ratio = float((subj_std / overall_scale).mean())
 
     # --- Gate 3: surrogates must break the score ---
     surrogate_epochs = [surrogate_epoch(ep, method="iaaft", seed=seed + i) for i, ep in enumerate(all_epochs[:60])]
@@ -158,8 +165,9 @@ def run_synthetic_pipeline(config: dict, seed: int | None = None) -> dict:
         finding_dict = {"status": "UNVALIDATED", "reason": str(e)}
 
     return {
-        "gate1_within_subject_ratio": gate1_ratio,
-        "gate1_pass": gate1_pass,
+        "gate1_icc": icc_result,
+        "gate1_within_subject_ratio": diag_ratio,
+        "gate1_pass": icc_result["pass"],
         "gate3_surrogate_mean_distance": float(np.mean(dist_surr)),
         "gate3_real_mean_distance": float(np.mean(real_cess_dist)),
         "gate3_pass": gate3_pass,
