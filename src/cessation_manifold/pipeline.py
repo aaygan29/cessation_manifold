@@ -31,15 +31,22 @@ def load_config(path: str) -> dict:
 
 def _epoch_the_session(session, epoch_len_s: float = 5.0):
     """Cut a synthetic session into fixed-length epochs, majority-voting the
-    collapse mask onto each epoch."""
+    collapse mask onto each epoch.
+
+    Returns (epochs, labels, fractions): labels is the boolean majority-vote
+    label used for stratification, fractions is the continuous per-epoch mean
+    of the collapse mask, used as the Gate 4 conformal regression target so
+    that target is not derived from the same features that produced the
+    manifold distance."""
     n_samples = session.data.shape[1]
     step = int(epoch_len_s * session.sfreq)
-    epochs, labels = [], []
+    epochs, labels, fractions = [], [], []
     for start in range(0, n_samples - step, step):
         epochs.append(session.data[:, start : start + step])
         frac_collapsed = session.collapse_mask[start : start + step].mean()
         labels.append(frac_collapsed > 0.5)
-    return epochs, np.array(labels, dtype=bool)
+        fractions.append(float(frac_collapsed))
+    return epochs, np.array(labels, dtype=bool), np.array(fractions, dtype=float)
 
 
 def extract_features(epoch: np.ndarray, sfreq: float) -> dict:
@@ -57,17 +64,20 @@ def features_to_matrix(feature_dicts: list):
     return X, names
 
 
-def run_synthetic_pipeline(config: dict) -> dict:
-    """Runs Gates 1, 3, 4 on synthetic Kuramoto data and returns a results dict."""
+def run_synthetic_pipeline(config: dict, seed: int | None = None) -> dict:
+    """Runs Gates 1, 3, 4 on synthetic Kuramoto data and returns a results dict.
+
+    `seed` overrides `config["synthetic"]["seed"]` when given, so a seed sweep
+    does not need to hand-edit config files."""
     cfg = config.get("synthetic", {})
     n_subjects = cfg.get("n_subjects", 6)
     n_sessions = cfg.get("n_sessions_per_subject", 3)
     sfreq = cfg.get("sfreq", 250.0)
     n_seconds = cfg.get("n_seconds", 60.0)
-    seed = cfg.get("seed", 0)
+    seed = cfg.get("seed", 0) if seed is None else seed
 
     # --- Gate 1: within-subject reproducibility across synthetic "sessions" ---
-    all_epochs, all_labels, subject_ids, session_ids = [], [], [], []
+    all_epochs, all_labels, all_fractions, subject_ids, session_ids = [], [], [], [], []
     for s in range(n_subjects):
         sessions = simulate_subject_sessions(
             subject_id=f"synthsub-{s:02d}",
@@ -78,12 +88,14 @@ def run_synthetic_pipeline(config: dict) -> dict:
             sfreq=sfreq,
         )
         for sess in sessions:
-            eps, labels = _epoch_the_session(sess)
+            eps, labels, fractions = _epoch_the_session(sess)
             all_epochs.extend(eps)
             all_labels.extend(labels)
+            all_fractions.extend(fractions)
             subject_ids.extend([sess.subject_id] * len(eps))
             session_ids.extend([sess.session_id] * len(eps))
     all_labels = np.array(all_labels)
+    all_fractions = np.array(all_fractions, dtype=float)
 
     feature_dicts = [extract_features(ep, sfreq) for ep in all_epochs]
     X, feature_names = features_to_matrix(feature_dicts)
@@ -120,7 +132,11 @@ def run_synthetic_pipeline(config: dict) -> dict:
     n_train, n_calib = int(n * 0.5), int(n * 0.25)
     train_idx, calib_idx, test_idx = idx[:n_train], idx[n_train : n_train + n_calib], idx[n_train + n_calib :]
 
-    y = dist  # regress the manifold distance itself from raw features (self-consistency check)
+    # Target is the continuous per-epoch collapse fraction (from the raw collapse
+    # mask), not the manifold distance derived from the same X. Regressing dist
+    # on X gave coverage 1.0 because the target was a near-deterministic function
+    # of the inputs (target leakage); collapse_fraction is an independent label.
+    y = all_fractions
     predictor = fit_split_conformal(X[train_idx], y[train_idx], X[calib_idx], y[calib_idx], alpha=0.1, seed=seed)
     coverage = empirical_coverage(predictor, X[test_idx], y[test_idx])
     gate4_pass = bool(coverage >= 0.9 - 0.05)
@@ -171,7 +187,7 @@ def run_gate2(config: dict, real_control_features: np.ndarray | None = None) -> 
         sess = simulate_subject_sessions(
             f"anchor-{s}", n_sessions=1, regime="collapsed", base_seed=seed + s, n_seconds=n_seconds, sfreq=sfreq
         )[0]
-        eps, labels = _epoch_the_session(sess)
+        eps, labels, _fractions = _epoch_the_session(sess)
         collapsed_epochs.extend(eps)
         collapsed_labels.extend(labels)
     collapsed_labels = np.array(collapsed_labels, dtype=bool)
@@ -179,7 +195,7 @@ def run_gate2(config: dict, real_control_features: np.ndarray | None = None) -> 
     baseline_sess = simulate_subject_sessions(
         "baseline-critical", n_sessions=1, regime="critical", base_seed=seed + 500, n_seconds=n_seconds, sfreq=sfreq
     )[0]
-    baseline_epochs, _ = _epoch_the_session(baseline_sess)
+    baseline_epochs, _, _ = _epoch_the_session(baseline_sess)
 
     anchor_feats = [extract_features(ep, sfreq) for ep in collapsed_epochs]
     baseline_feats = [extract_features(ep, sfreq) for ep in baseline_epochs]

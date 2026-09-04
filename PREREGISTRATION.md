@@ -42,7 +42,19 @@ data that preserves linear spectral content but not nonlinear structure.
    nominal coverage rate on held-out data, no number from this pipeline
    should be reported as a validated finding; the honesty layer forces an
    abstention (`UnvalidatedClaimError`) rather than a silently miscalibrated
-   number.
+   number. **Additional constraint (added post-council-review, before real
+   data):** the regression target used by the conformal predictor must not
+   be an algorithmic function of the same features that produced it (target-
+   leakage failure mode found in v0.0). The current target is per-epoch
+   collapse fraction (raw label), not the manifold distance.
+5. **Berger specificity (real-data method re-validation).** The feature
+   stack must recover the eyes-closed vs eyes-open alpha rise on real LEMON
+   EEG (Berger effect) with (a) posterior d > 0.5 pooled, (b) block-level
+   permutation p < 0.05 (not epoch-level MW-U which assumes independence
+   across autocorrelated 4-second windows), and (c) posterior-minus-frontal
+   d difference > 0.3, so the effect is specifically posterior rather than
+   generic arousal. Failure on any of (a), (b), (c) blocks any downstream
+   cessation claim.
 
 ## What v0 can and cannot claim
 
