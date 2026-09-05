@@ -16,6 +16,9 @@ def _bandpass(x: np.ndarray, sfreq: float, lo: float, hi: float) -> np.ndarray:
     if lo >= nyq or hi >= nyq or hi <= lo:
         return np.asarray(x, dtype=float)
     b, a = butter(3, [lo / nyq, hi / nyq], btype="band")
+    padlen = 3 * (max(len(a), len(b)) - 1)
+    if len(x) <= padlen:
+        return np.asarray(x, dtype=float)
     return filtfilt(b, a, x)
 
 

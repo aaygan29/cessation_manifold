@@ -359,11 +359,8 @@ def simulate_subject_sessions(
     if reserved_overlap:
         dup = ", ".join(sorted(reserved_overlap))
         raise ValueError(f"model_kwargs contains reserved per-session arguments: {dup}")
-    overlap = set(model_kwargs).intersection(kwargs)
-    if overlap:
-        dup = ", ".join(sorted(overlap))
-        raise ValueError(f"duplicate synthetic model arguments provided in model_kwargs and kwargs: {dup}")
-    merged_kwargs = {**kwargs, **model_kwargs}
+    # Explicit kwargs take precedence to preserve historical call-site behavior.
+    merged_kwargs = {**model_kwargs, **kwargs}
     sessions = []
     for i in range(n_sessions):
         sessions.append(

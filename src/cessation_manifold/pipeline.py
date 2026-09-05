@@ -401,7 +401,9 @@ def run_synthetic_pipeline(config: dict, seed: int | None = None) -> dict:
         bucket = {}
         for label in np.unique(labels):
             mask = labels == label
-            bucket[str(label)] = float(covered_test[mask].mean())
+            if np.any(mask):
+                val = covered_test[mask]
+                bucket[str(label)] = float(val.mean()) if len(val) else float("nan")
         if key == "subject":
             per_subject_coverage = bucket
         elif key == "session":
@@ -411,9 +413,9 @@ def run_synthetic_pipeline(config: dict, seed: int | None = None) -> dict:
 
     subgroup_floor = predictor.target_coverage - 0.05
     subgroup_abstentions = {
-        "subject": sorted([k for k, v in per_subject_coverage.items() if v < subgroup_floor]),
-        "session": sorted([k for k, v in per_session_coverage.items() if v < subgroup_floor]),
-        "state": sorted([k for k, v in per_state_coverage.items() if v < subgroup_floor]),
+        "subject": sorted([k for k, v in per_subject_coverage.items() if np.isfinite(v) and v < subgroup_floor]),
+        "session": sorted([k for k, v in per_session_coverage.items() if np.isfinite(v) and v < subgroup_floor]),
+        "state": sorted([k for k, v in per_state_coverage.items() if np.isfinite(v) and v < subgroup_floor]),
     }
 
     synthetic_validity = {
@@ -572,7 +574,8 @@ def run_gate2(config: dict, real_control_features: np.ndarray | None = None) -> 
     baseline_epochs, _, _ = _epoch_the_session(baseline_sess)
 
     all_eps = collapsed_epochs + baseline_epochs
-    ms_maps = _fit_microstate_maps_from_epochs(all_eps, n_states=4, seed=seed)
+    n_states = int(config.get("preprocessing", {}).get("microstate_n_states", 4))
+    ms_maps = _fit_microstate_maps_from_epochs(all_eps, n_states=n_states, seed=seed)
     anchor_feats = [extract_features(ep, sfreq, microstate_maps=ms_maps) for ep in collapsed_epochs]
     baseline_feats = [extract_features(ep, sfreq, microstate_maps=ms_maps) for ep in baseline_epochs]
 

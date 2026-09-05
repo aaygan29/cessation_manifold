@@ -62,7 +62,7 @@ def test_pipeline_reports_new_validity_and_conditional_coverage_blocks():
     assert "synthetic_validity" in result
     assert "distribution_shift_diagnostics" in result
     assert "gate4_conditional_coverage" in result
-    assert {"subject", "session", "state"} <= set(result["gate4_conditional_coverage"].keys())
+    assert {"subject", "session", "state", "test_block"} <= set(result["gate4_conditional_coverage"].keys())
     assert isinstance(result["synthetic_validity"]["parameter_recovery"]["available"], bool)
     assert "x_feature_mean_shift_train_test_l1" in result["distribution_shift_diagnostics"]
     assert isinstance(result["distribution_shift_diagnostics"]["y_mean_shift_train_test"], float)
