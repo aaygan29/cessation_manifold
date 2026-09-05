@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import numpy as np
 from sklearn.cluster import KMeans
+from cessation_manifold.preprocessing.robustness import ensure_feature_dict_finite, sanitize_epoch
 
 
 def _gfp_peaks(data: np.ndarray) -> np.ndarray:
@@ -44,6 +45,7 @@ def fit_microstate_maps(epochs: np.ndarray, n_states: int = 4, seed: int = 0):
 
 def microstate_sequence(epoch: np.ndarray, maps: np.ndarray) -> np.ndarray:
     """Label every sample of one epoch with its best-fit (polarity-free) microstate."""
+    epoch = sanitize_epoch(epoch).epoch
     n_channels, n_samples = epoch.shape
     x = epoch.T
     x = x / (np.linalg.norm(x, axis=1, keepdims=True) + 1e-12)
@@ -78,4 +80,4 @@ def microstate_features(epoch: np.ndarray, maps: np.ndarray) -> dict:
     feats = {f"ms_occ_{k}": occ[k] for k in range(n_states)}
     feats["ms_mean_duration_samples"] = mean_duration
     feats["ms_transition_entropy"] = float(ent)
-    return feats
+    return ensure_feature_dict_finite(feats)[0]

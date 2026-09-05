@@ -6,6 +6,16 @@ configs (lemon, openneuro_meditation) currently only wire the loader and
 feature extraction; the manifold/conformal steps need a labeled cessation
 window to anchor on, which synthetic data provides today and real cessation
 annotations (Zarka, NIMHANS) will provide once that data lands.
+
+References
+----------
+Koo, T. K., & Li, M. Y. (2016). A Guideline of Selecting and Reporting
+Intraclass Correlation Coefficients for Reliability Research. Journal of
+Chiropractic Medicine, 15(2), 155-163. https://doi.org/10.1016/j.jcm.2016.02.012
+
+Barber, R. F., Candes, E., Ramdas, A., & Tibshirani, R. J. (2023).
+Conformal prediction with conditional guarantees. JRSS Series B.
+https://doi.org/10.1093/jrsssb/qkad020
 """
 from __future__ import annotations
 
@@ -23,8 +33,9 @@ from .embed.distance import distance_from_cessation
 from .honesty.adaptive_conformal import AdaptiveConformalPredictor
 from .honesty.gates import gate, UnvalidatedClaimError
 from .honesty.icc import gate1_icc
-from .preprocessing.artifact_removal import remove_artifacts
+from .preprocessing.artifact_removal import remove_artifacts, remove_artifacts_mne
 from .preprocessing.robustness import ensure_feature_dict_finite, sanitize_epoch
+from .io.bids_loader import load_uploaded_eeg
 
 
 def load_config(path: str) -> dict:
@@ -79,6 +90,55 @@ def features_to_matrix(feature_dicts: list):
     return X, names
 
 
+def _feature_reliability(feature_dicts: list[dict]) -> dict:
+    names = sorted(feature_dicts[0].keys()) if feature_dicts else []
+    out = {}
+    for name in names:
+        vals = np.array([row.get(name, np.nan) for row in feature_dicts], dtype=float)
+        finite = np.isfinite(vals)
+        out[name] = {
+            "finite_fraction": float(finite.mean()) if len(vals) else 0.0,
+            "mean": float(np.nanmean(vals)) if np.any(finite) else 0.0,
+            "std": float(np.nanstd(vals)) if np.any(finite) else 0.0,
+        }
+    return out
+
+
+def _regime_icc_audit(cfg: dict, seed: int, n_subjects: int, n_sessions: int, sfreq: float, n_seconds: float) -> dict:
+    import pandas as pd
+
+    rows = []
+    for regime_idx, regime in enumerate(("collapsed", "critical", "control")):
+        for s in range(n_subjects):
+            sessions = simulate_subject_sessions(
+                subject_id=f"audit-{s:02d}",
+                n_sessions=n_sessions,
+                regime=regime,
+                base_seed=seed + 100 * s + 20_000 * regime_idx,
+                n_seconds=n_seconds,
+                sfreq=sfreq,
+            )
+            for sess in sessions:
+                rows.append(
+                    {
+                        "subject": sess.subject_id,
+                        "session": sess.session_id,
+                        "regime": regime,
+                        "order_parameter_mean": float(np.mean(sess.order_parameter)),
+                    }
+                )
+    audit_df = pd.DataFrame(rows)
+    out = {}
+    for regime in ("collapsed", "critical", "control"):
+        regime_df = audit_df[audit_df["regime"] == regime]
+        pivot = regime_df.pivot(index="subject", columns="session", values="order_parameter_mean")
+        icc_result = gate1_icc(pivot.values, n_perm=200, moderate_threshold=0.5, seed=seed)
+        icc_result["available"] = True
+        icc_result["signal"] = "order_parameter_mean"
+        out[regime] = icc_result
+    return out
+
+
 def run_synthetic_pipeline(config: dict, seed: int | None = None) -> dict:
     """Runs Gates 1, 3, 4 on synthetic Kuramoto data and returns a results dict.
 
@@ -127,13 +187,19 @@ def run_synthetic_pipeline(config: dict, seed: int | None = None) -> dict:
     import pandas as pd
 
     df = pd.DataFrame(
-        {"subject": subject_ids, "session": session_ids, "label": all_labels, "distance": dist}
+        {"subject": subject_ids, "session": session_ids, "regime": "collapsed", "label": all_labels, "distance": dist}
     )
-    cess_df = df[df["label"]]
-    session_means = cess_df.groupby(["subject", "session"])["distance"].mean().reset_index()
-
-    pivot = session_means.pivot(index="subject", columns="session", values="distance")
-    icc_result = gate1_icc(pivot.values, n_perm=200, moderate_threshold=0.5, seed=seed)
+    session_means = df.groupby(["subject", "session", "regime"])["distance"].mean().reset_index()
+    icc_result = gate1_icc(
+        session_means.pivot(index="subject", columns="session", values="distance").values,
+        n_perm=200,
+        moderate_threshold=0.5,
+        seed=seed,
+    )
+    regime_icc = _regime_icc_audit(
+        cfg, seed=seed, n_subjects=n_subjects, n_sessions=n_sessions, sfreq=sfreq, n_seconds=n_seconds
+    )
+    regime_icc["collapsed"] = {**icc_result, "available": True, "signal": "distance"}
 
     subj_std = session_means.groupby("subject")["distance"].std().fillna(0.0)
     overall_scale = session_means["distance"].std() + 1e-9
@@ -193,6 +259,13 @@ def run_synthetic_pipeline(config: dict, seed: int | None = None) -> dict:
 
     return {
         "gate1_icc": icc_result,
+        "gate1_regime_icc": regime_icc,
+        "gate1_anchor_size": {
+            "n_subjects": int(n_subjects),
+            "n_sessions_per_subject": int(n_sessions),
+            "n_epochs_total": int(len(X)),
+            "n_epochs_by_regime": {"collapsed": int(len(X))},
+        },
         "gate1_within_subject_ratio": diag_ratio,
         "gate1_pass": icc_result["pass"],
         "gate3_surrogate_mean_distance": float(np.mean(dist_surr)),
@@ -206,6 +279,51 @@ def run_synthetic_pipeline(config: dict, seed: int | None = None) -> dict:
         "example_finding": finding_dict,
         "n_epochs": int(len(X)),
         "n_subjects": n_subjects,
+    }
+
+
+def run_real_data_pipeline(config: dict, eeg_path: str, subject_id: str = "uploaded") -> dict:
+    """Run feature extraction and artifact reporting for one uploaded EEG file.
+
+    This path validates preprocessing/feature robustness on real EEG but does
+    not claim cessation detection unless cessation-labeled datasets are
+    supplied.
+    """
+    data_cfg = config.get("data", {})
+    preprocessing_cfg = config.get("preprocessing", {})
+    loaded = load_uploaded_eeg(
+        eeg_path=eeg_path,
+        dataset_id=data_cfg.get("source", "uploaded"),
+        epoch_length_s=float(data_cfg.get("epoch_length_s", 5.0)),
+        l_freq=float(data_cfg.get("l_freq", 1.0)),
+        h_freq=float(data_cfg.get("h_freq", 45.0)),
+    )
+    raw_clean, provenance = remove_artifacts_mne(
+        loaded.raw,
+        random_state=int(preprocessing_cfg.get("seed", 0)),
+    )
+    import mne
+
+    epochs = mne.make_fixed_length_epochs(
+        raw_clean, duration=float(data_cfg.get("epoch_length_s", 5.0)), preload=True, verbose=False
+    )
+    feature_dicts = [extract_features(ep, loaded.sfreq, preprocessing_cfg) for ep in epochs.get_data()]
+    X, names = features_to_matrix(feature_dicts)
+    finite_matrix = np.isfinite(X).all()
+    return {
+        "dataset": loaded.source,
+        "subject_id": subject_id,
+        "session_id": loaded.session_id,
+        "n_channels": int(len(loaded.ch_names)),
+        "n_epochs": int(X.shape[0]),
+        "sampling_rate_hz": float(loaded.sfreq),
+        "features": names,
+        "feature_reliability": _feature_reliability(feature_dicts),
+        "feature_matrix_finite": bool(finite_matrix),
+        "artifact_rejection_rate": float(provenance.get("artifact_rejection_rate", 0.0)),
+        "artifact_provenance": provenance,
+        "claim_scope": "feature-validation-only",
+        "claim_note": "Cessation claims require cessation-labeled EEG and independent clinical adjudication.",
     }
 
 

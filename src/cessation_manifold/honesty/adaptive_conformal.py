@@ -1,4 +1,15 @@
-"""Adaptive, block-aware conformal prediction utilities."""
+"""Adaptive, block-aware conformal prediction utilities.
+
+References
+----------
+Angelopoulos, A. N., & Bates, S. (2021). A Gentle Introduction to
+Conformal Prediction and Distribution-Free Uncertainty Quantification.
+arXiv:2107.07511.
+
+Papadopoulos, H., Nikolopoulos, K., & Vovk, V. (2021). Conformal
+Prediction for Time Series. In *Conformal Prediction for Reliable
+Machine Learning*. Elsevier. https://doi.org/10.1016/B978-0-12-809715-7.00020-9
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -57,8 +68,9 @@ class AdaptiveConformalPredictor:
         effect = abs(float(effect_size)) if effect_size is not None else 0.5
         calib_frac = np.clip(0.2 + 0.08 / max(effect, 0.2), 0.2, 0.35) if self.adaptive_sizing else 0.25
         test_frac = np.clip(0.15 + 0.05 / max(effect, 0.2), 0.15, 0.3) if self.adaptive_sizing else 0.25
-        n_calib = min(max(8, int(round(n * calib_frac))), max(n - 2, 1))
-        n_test = min(max(8, int(round(n * test_frac))), max(n - n_calib - 1, 1))
+        min_eval = 50 if n >= 150 else max(8, int(round(0.2 * n)))
+        n_calib = min(max(min_eval, int(round(n * calib_frac))), max(n - 2, 1))
+        n_test = min(max(min_eval, int(round(n * test_frac))), max(n - n_calib - 1, 1))
         n_train = max(n - n_calib - n_test, 1)
         if n_train + n_calib + n_test > n:
             n_test = max(n - n_train - n_calib, 1)
@@ -82,7 +94,7 @@ class AdaptiveConformalPredictor:
         counts = {"train": 0, "calib": 0, "test": 0}
         targets = {"train": sizes.n_train, "calib": sizes.n_calib, "test": sizes.n_test}
         for group in grouped:
-            bucket = min(targets, key=lambda name: counts[name] / max(targets[name], 1))
+            bucket = max(targets, key=lambda name: targets[name] - counts[name])
             if bucket == "train":
                 train_idx.extend(group.tolist())
             elif bucket == "calib":
@@ -133,9 +145,13 @@ class AdaptiveConformalPredictor:
         self.alpha_ = base_alpha
         cv_coverages, widths = self._crossval_coverages(preds, y_calib, calib_blocks)
         mean_cov = float(np.mean(cv_coverages))
-        self.alpha_ = float(np.clip(base_alpha + 0.5 * (mean_cov - self.target_coverage), 0.01, 0.25))
+        alpha_adjust = 0.5 * max(0.0, self.target_coverage - mean_cov)
+        self.alpha_ = float(np.clip(base_alpha - alpha_adjust, 0.01, base_alpha))
         _, tuned_widths = self._crossval_coverages(preds, y_calib, calib_blocks)
-        self.half_width_ = float(np.median(tuned_widths)) if tuned_widths else self._quantile_width(residuals, self.alpha_)
+        conservative_width = self._quantile_width(residuals, self.alpha_)
+        tuned_width = float(np.median(tuned_widths)) if tuned_widths else conservative_width
+        finite_sample_inflation = 1.0 + min(0.25, 2.0 / max(np.sqrt(len(y_calib)), 1.0))
+        self.half_width_ = float(max(tuned_width, conservative_width) * finite_sample_inflation)
         p_values = 1.0 - (np.argsort(np.argsort(residuals)) + 1) / (len(residuals) + 1)
         hist, _ = np.histogram(p_values, bins=10, range=(0.0, 1.0))
         per_block_coverage = {}
@@ -156,6 +172,7 @@ class AdaptiveConformalPredictor:
             "min_block_coverage": float(min(per_block_coverage.values())) if per_block_coverage else float(mean_cov),
             "alpha": self.alpha_,
             "half_width": float(self.half_width_),
+            "finite_sample_inflation": float(finite_sample_inflation),
             "band_half_widths": [float(v) for v in widths],
         }
         return self
