@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from cessation_manifold.preprocessing.robustness import ensure_feature_dict_finite, sanitize_epoch
+
 
 def _avalanches(binary_activity: np.ndarray):
     sizes, durations = [], []
@@ -53,6 +55,7 @@ def _powerlaw_exponent(values: np.ndarray) -> float:
 def criticality_features(epoch: np.ndarray, sfreq: float, bin_ms: float = 4.0) -> dict:
     """epoch: (n_channels, n_samples). Returns avalanche size/duration exponents
     and branching ratio (mean events per bin / mean events in preceding bin)."""
+    epoch = sanitize_epoch(epoch).epoch
     n_channels, n_samples = epoch.shape
     bin_samples = max(1, int(bin_ms / 1000 * sfreq))
     n_bins = n_samples // bin_samples
@@ -76,9 +79,10 @@ def criticality_features(epoch: np.ndarray, sfreq: float, bin_ms: float = 4.0) -
     else:
         branching = np.nan
 
-    return {
+    features = {
         "avalanche_size_exponent": size_exp,
         "avalanche_duration_exponent": dur_exp,
         "branching_ratio": branching,
         "n_avalanches": float(len(sizes)),
     }
+    return ensure_feature_dict_finite(features)[0]

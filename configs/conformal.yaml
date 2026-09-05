@@ -1,0 +1,8 @@
+target_coverage: 0.9
+adaptive_sizing: true
+n_splits: 5
+stability_std_threshold: 0.05
+block_structure:
+  - subject
+  - session
+alpha_tuning: holdout-coverage-feedback

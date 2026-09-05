@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import numpy as np
 from dataclasses import dataclass
-from sklearn.ensemble import RandomForestRegressor
+
+from .adaptive_conformal import AdaptiveConformalPredictor
 
 
 @dataclass
@@ -20,6 +21,8 @@ class ConformalPredictor:
     alpha: float
 
     def predict_interval(self, X: np.ndarray):
+        if hasattr(self.model, "predict_interval"):
+            return self.model.predict_interval(X)
         point = self.model.predict(X)
         return point, point - self.half_width, point + self.half_width
 
@@ -33,15 +36,15 @@ def fit_split_conformal(
     seed: int = 0,
 ) -> ConformalPredictor:
     """alpha=0.1 -> nominal 90% coverage."""
-    model = RandomForestRegressor(n_estimators=200, random_state=seed, max_depth=6)
-    model.fit(X_train, y_train)
-
-    residuals = np.abs(y_calib - model.predict(X_calib))
-    n = len(residuals)
-    q_level = min(1.0, np.ceil((n + 1) * (1 - alpha)) / n)
-    half_width = float(np.quantile(residuals, q_level))
-
-    return ConformalPredictor(model=model, half_width=half_width, alpha=alpha)
+    predictor = AdaptiveConformalPredictor(
+        n_epochs=len(X_train) + len(X_calib),
+        target_coverage=1.0 - alpha,
+        adaptive_sizing=False,
+        n_splits=3,
+        seed=seed,
+    )
+    predictor.fit(X_train, y_train, X_calib, y_calib)
+    return ConformalPredictor(model=predictor, half_width=float(predictor.half_width_), alpha=float(predictor.alpha_))
 
 
 def empirical_coverage(predictor: ConformalPredictor, X_test: np.ndarray, y_test: np.ndarray) -> float:
