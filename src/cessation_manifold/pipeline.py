@@ -170,6 +170,16 @@ def _distribution_shift_diagnostics(X: np.ndarray, y: np.ndarray, split: dict) -
     def _safe_mean(v):
         return float(np.nanmean(v)) if len(v) else 0.0
 
+    if X.shape[1] == 0:
+        return {
+            "x_feature_mean_shift_train_calib_l1": 0.0,
+            "x_feature_mean_shift_train_test_l1": 0.0,
+            "x_feature_mean_shift_train_calib_max": 0.0,
+            "x_feature_mean_shift_train_test_max": 0.0,
+            "y_mean_shift_train_calib": float(abs(_safe_mean(y[train]) - _safe_mean(y[calib]))),
+            "y_mean_shift_train_test": float(abs(_safe_mean(y[train]) - _safe_mean(y[test]))),
+        }
+
     train_mean = np.nanmean(X[train], axis=0) if len(train) else np.zeros(X.shape[1], dtype=float)
     calib_mean = np.nanmean(X[calib], axis=0) if len(calib) else np.zeros(X.shape[1], dtype=float)
     test_mean = np.nanmean(X[test], axis=0) if len(test) else np.zeros(X.shape[1], dtype=float)

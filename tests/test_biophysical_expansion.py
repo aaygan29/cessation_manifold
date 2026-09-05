@@ -20,6 +20,20 @@ def test_synthetic_models_generate_consistent_shapes():
         assert sess.model_name == model
 
 
+def test_synthetic_dispatcher_alias_and_invalid_name():
+    alias_session = simulate_synthetic_eeg(
+        model="thalamocortical",
+        n_channels=4,
+        n_seconds=3.0,
+        sfreq=100.0,
+        regime="control",
+        seed=3,
+    )
+    assert alias_session.model_name == "thalamo_cortical"
+    with pytest.raises(ValueError, match="supported models"):
+        simulate_synthetic_eeg(model="unknown_model")
+
+
 def test_expanded_feature_stack_contains_connectivity_and_cross_frequency():
     rng = np.random.default_rng(0)
     epoch = rng.standard_normal((4, 600))
@@ -49,6 +63,9 @@ def test_pipeline_reports_new_validity_and_conditional_coverage_blocks():
     assert "distribution_shift_diagnostics" in result
     assert "gate4_conditional_coverage" in result
     assert {"subject", "session", "state"} <= set(result["gate4_conditional_coverage"].keys())
+    assert isinstance(result["synthetic_validity"]["parameter_recovery"]["available"], bool)
+    assert "x_feature_mean_shift_train_test_l1" in result["distribution_shift_diagnostics"]
+    assert isinstance(result["distribution_shift_diagnostics"]["y_mean_shift_train_test"], float)
 
 
 def test_model_kwargs_are_forwarded_into_pipeline_metadata():
