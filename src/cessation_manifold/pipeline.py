@@ -170,16 +170,22 @@ def _distribution_shift_diagnostics(X: np.ndarray, y: np.ndarray, split: dict) -
     def _safe_mean(v):
         return float(np.nanmean(v)) if len(v) else 0.0
 
-    x_train_mean = _safe_mean(X[train])
-    x_calib_mean = _safe_mean(X[calib])
-    x_test_mean = _safe_mean(X[test])
+    train_mean = np.nanmean(X[train], axis=0) if len(train) else np.zeros(X.shape[1], dtype=float)
+    calib_mean = np.nanmean(X[calib], axis=0) if len(calib) else np.zeros(X.shape[1], dtype=float)
+    test_mean = np.nanmean(X[test], axis=0) if len(test) else np.zeros(X.shape[1], dtype=float)
+    scale = np.nanstd(X[train], axis=0) + 1e-12 if len(train) else np.ones(X.shape[1], dtype=float)
+
+    feat_shift_train_calib = np.abs(train_mean - calib_mean) / scale
+    feat_shift_train_test = np.abs(train_mean - test_mean) / scale
     y_train_mean = _safe_mean(y[train])
     y_calib_mean = _safe_mean(y[calib])
     y_test_mean = _safe_mean(y[test])
 
     return {
-        "x_global_mean_shift_train_calib": float(abs(x_train_mean - x_calib_mean)),
-        "x_global_mean_shift_train_test": float(abs(x_train_mean - x_test_mean)),
+        "x_feature_mean_shift_train_calib_l1": float(np.nanmean(feat_shift_train_calib)),
+        "x_feature_mean_shift_train_test_l1": float(np.nanmean(feat_shift_train_test)),
+        "x_feature_mean_shift_train_calib_max": float(np.nanmax(feat_shift_train_calib)),
+        "x_feature_mean_shift_train_test_max": float(np.nanmax(feat_shift_train_test)),
         "y_mean_shift_train_calib": float(abs(y_train_mean - y_calib_mean)),
         "y_mean_shift_train_test": float(abs(y_train_mean - y_test_mean)),
     }
@@ -214,10 +220,13 @@ def _centroid_stability_bootstrap(Xr: np.ndarray, labels: np.ndarray, subject_id
     drifts = []
     for _ in range(n_boot):
         sampled = rng.choice(unique_subs, size=len(unique_subs), replace=True)
-        keep = np.isin(subs, sampled)
-        if keep.sum() <= 1 or labels[keep].sum() == 0:
+        sampled_indices = [np.flatnonzero(subs == sub) for sub in sampled]
+        if not sampled_indices:
             continue
-        c = Xr[keep][labels[keep]].mean(axis=0)
+        idx = np.concatenate(sampled_indices)
+        if len(idx) <= 1 or labels[idx].sum() == 0:
+            continue
+        c = Xr[idx][labels[idx]].mean(axis=0)
         drifts.append(float(np.linalg.norm(c - anchor)))
     if not drifts:
         return {"available": False}

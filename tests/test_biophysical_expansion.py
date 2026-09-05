@@ -1,6 +1,7 @@
 import numpy as np
+import pytest
 
-from cessation_manifold.io.synthetic import simulate_synthetic_eeg
+from cessation_manifold.io.synthetic import simulate_subject_sessions, simulate_synthetic_eeg
 from cessation_manifold.pipeline import extract_features, run_synthetic_pipeline
 
 
@@ -67,3 +68,29 @@ def test_model_kwargs_are_forwarded_into_pipeline_metadata():
     result = run_synthetic_pipeline(config, seed=0)
     assert result["synthetic_model"] == "neural_mass"
     assert result["synthetic_model_params"]["collapse_gain"] == 4.25
+
+
+def test_model_kwargs_change_generated_session_params():
+    sessions = simulate_subject_sessions(
+        subject_id="sub-kw",
+        n_sessions=1,
+        regime="collapsed",
+        model="neural_mass",
+        model_kwargs={"collapse_gain": 4.1},
+        sfreq=80.0,
+        n_seconds=5.0,
+    )
+    assert sessions[0].model_params["collapse_gain"] == 4.1
+
+
+def test_reserved_model_kwargs_are_rejected():
+    with pytest.raises(ValueError, match="reserved"):
+        simulate_subject_sessions(
+            subject_id="sub-kw",
+            n_sessions=1,
+            regime="collapsed",
+            model="kuramoto",
+            model_kwargs={"seed": 2},
+            sfreq=80.0,
+            n_seconds=5.0,
+        )

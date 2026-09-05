@@ -354,6 +354,11 @@ def simulate_subject_sessions(
 ) -> list:
     """Multiple synthetic sessions for one subject, for the Gate-1 dense-sampling check."""
     model_kwargs = model_kwargs or {}
+    reserved = {"regime", "seed", "subject_id", "session_id"}
+    reserved_overlap = set(model_kwargs).intersection(reserved)
+    if reserved_overlap:
+        dup = ", ".join(sorted(reserved_overlap))
+        raise ValueError(f"model_kwargs contains reserved per-session arguments: {dup}")
     overlap = set(model_kwargs).intersection(kwargs)
     if overlap:
         dup = ", ".join(sorted(overlap))
