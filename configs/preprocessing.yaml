@@ -1,0 +1,15 @@
+enabled: true
+methods:
+  - ica
+  - wavelet
+fallback_on_failure: true
+seed: 0
+ica:
+  n_components: auto
+  blink_threshold_z: 2.5
+  muscle_threshold_z: 2.5
+wavelet:
+  family: haar
+  levels: 4
+  edge_handling: repeat-last-sample
+channel_exclusions: []

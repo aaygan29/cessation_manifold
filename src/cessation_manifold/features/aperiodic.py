@@ -10,6 +10,8 @@ from __future__ import annotations
 import numpy as np
 from scipy.signal import welch
 
+from cessation_manifold.preprocessing.robustness import ensure_feature_dict_finite, sanitize_epoch
+
 
 def spectral_exponent(
     epoch_channel: np.ndarray, sfreq: float, fmin: float = 2.0, fmax: float = 40.0
@@ -27,13 +29,15 @@ def spectral_exponent(
 
 def aperiodic_features(epoch: np.ndarray, sfreq: float) -> dict:
     """Mean aperiodic exponent/offset across channels for one (channels, samples) epoch."""
+    epoch = sanitize_epoch(epoch).epoch
     exps, offs = [], []
     for ch in epoch:
         r = spectral_exponent(ch, sfreq)
         if not np.isnan(r["aperiodic_exponent"]):
             exps.append(r["aperiodic_exponent"])
             offs.append(r["aperiodic_offset"])
-    return {
+    features = {
         "aperiodic_exponent_mean": float(np.mean(exps)) if exps else np.nan,
         "aperiodic_offset_mean": float(np.mean(offs)) if offs else np.nan,
     }
+    return ensure_feature_dict_finite(features)[0]

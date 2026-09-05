@@ -20,9 +20,11 @@ from .features.criticality import criticality_features
 from .features.surrogates import surrogate_epoch
 from .embed.manifold import fit_manifold, transform
 from .embed.distance import distance_from_cessation
-from .honesty.conformal import fit_split_conformal, empirical_coverage
+from .honesty.adaptive_conformal import AdaptiveConformalPredictor
 from .honesty.gates import gate, UnvalidatedClaimError
 from .honesty.icc import gate1_icc
+from .preprocessing.artifact_removal import remove_artifacts
+from .preprocessing.robustness import ensure_feature_dict_finite, sanitize_epoch
 
 
 def load_config(path: str) -> dict:
@@ -50,12 +52,24 @@ def _epoch_the_session(session, epoch_len_s: float = 5.0):
     return epochs, np.array(labels, dtype=bool), np.array(fractions, dtype=float)
 
 
-def extract_features(epoch: np.ndarray, sfreq: float) -> dict:
+def extract_features(epoch: np.ndarray, sfreq: float, preprocessing_config: dict | None = None) -> dict:
+    preprocessing_config = preprocessing_config or {}
+    sanitized = sanitize_epoch(epoch, min_samples=max(16, int(sfreq // 2)))
+    epoch = sanitized.epoch
+    if preprocessing_config.get("enabled", False):
+        cleaned, _mask, _metrics, _provenance = remove_artifacts(
+            epoch,
+            sfreq=sfreq,
+            methods=preprocessing_config.get("methods", ("ica", "wavelet")),
+            fallback_on_failure=preprocessing_config.get("fallback_on_failure", True),
+            seed=preprocessing_config.get("seed", 0),
+        )
+        epoch = cleaned
     feats = {}
     feats.update(aperiodic_features(epoch, sfreq))
     feats.update(complexity_features(epoch, sfreq))
     feats.update(criticality_features(epoch, sfreq))
-    return feats
+    return ensure_feature_dict_finite(feats)[0]
 
 
 def features_to_matrix(feature_dicts: list):
@@ -76,6 +90,8 @@ def run_synthetic_pipeline(config: dict, seed: int | None = None) -> dict:
     sfreq = cfg.get("sfreq", 250.0)
     n_seconds = cfg.get("n_seconds", 60.0)
     seed = cfg.get("seed", 0) if seed is None else seed
+    preprocessing_cfg = config.get("preprocessing", {})
+    conformal_cfg = config.get("conformal", {})
 
     # --- Gate 1: within-subject reproducibility across synthetic "sessions" ---
     all_epochs, all_labels, all_fractions, subject_ids, session_ids = [], [], [], [], []
@@ -98,7 +114,7 @@ def run_synthetic_pipeline(config: dict, seed: int | None = None) -> dict:
     all_labels = np.array(all_labels)
     all_fractions = np.array(all_fractions, dtype=float)
 
-    feature_dicts = [extract_features(ep, sfreq) for ep in all_epochs]
+    feature_dicts = [extract_features(ep, sfreq, preprocessing_config=preprocessing_cfg) for ep in all_epochs]
     X, feature_names = features_to_matrix(feature_dicts)
 
     model, Xr = fit_manifold(X, all_labels, feature_names, seed=seed)
@@ -134,31 +150,42 @@ def run_synthetic_pipeline(config: dict, seed: int | None = None) -> dict:
     gate3_pass = bool(np.mean(dist_surr) > np.mean(real_cess_dist) * 1.2)
 
     # --- Gate 4: split-conformal coverage ---
-    n = len(X)
-    idx = np.random.default_rng(seed).permutation(n)
-    n_train, n_calib = int(n * 0.5), int(n * 0.25)
-    train_idx, calib_idx, test_idx = idx[:n_train], idx[n_train : n_train + n_calib], idx[n_train + n_calib :]
-
     # Target is the continuous per-epoch collapse fraction (from the raw collapse
     # mask), not the manifold distance derived from the same X. Regressing dist
     # on X gave coverage 1.0 because the target was a near-deterministic function
     # of the inputs (target leakage); collapse_fraction is an independent label.
     y = all_fractions
-    predictor = fit_split_conformal(X[train_idx], y[train_idx], X[calib_idx], y[calib_idx], alpha=0.1, seed=seed)
-    coverage = empirical_coverage(predictor, X[test_idx], y[test_idx])
-    gate4_pass = bool(coverage >= 0.9 - 0.05)
+    block_structure = {"subject": np.array(subject_ids), "session": np.array(session_ids)}
+    predictor = AdaptiveConformalPredictor(
+        n_epochs=len(X),
+        block_structure=block_structure,
+        target_coverage=conformal_cfg.get("target_coverage", 0.9),
+        adaptive_sizing=conformal_cfg.get("adaptive_sizing", True),
+        n_splits=conformal_cfg.get("n_splits", 5),
+        stability_std_threshold=conformal_cfg.get("stability_std_threshold", 0.05),
+        seed=seed,
+    ).fit_from_full_data(X, y)
+    split = predictor.last_split_
+    coverage_eval = predictor.evaluate(
+        X[split["test"]],
+        y[split["test"]],
+        test_blocks=split["blocks"][split["test"]],
+    )
+    coverage = coverage_eval["coverage"]
+    gate4_pass = bool(coverage >= predictor.target_coverage - 0.05)
 
     provenance_config = {"synthetic": cfg}
     try:
-        point, lo, hi = predictor.predict_interval(X[test_idx][:1])
+        point, lo, hi = predictor.predict_interval(X[split["test"]][:1])
         finding = gate(
             value=float(point[0]),
             lower=float(lo[0]),
             upper=float(hi[0]),
-            coverage_target=0.9,
+            coverage_target=predictor.target_coverage,
             coverage_achieved=coverage,
             dataset_id="synthetic-kuramoto",
             config=provenance_config,
+            extra={"conformal_diagnostics": predictor.diagnostics_},
         )
         finding_dict = finding.to_dict()
     except UnvalidatedClaimError as e:
@@ -172,9 +199,12 @@ def run_synthetic_pipeline(config: dict, seed: int | None = None) -> dict:
         "gate3_real_mean_distance": float(np.mean(real_cess_dist)),
         "gate3_pass": gate3_pass,
         "gate4_conformal_coverage": coverage,
+        "gate4_block_coverage": coverage_eval["block_coverage"],
+        "gate4_diagnostics": predictor.diagnostics_,
+        "gate4_unstable_for_review": not predictor.diagnostics_.get("threshold_stable", True),
         "gate4_pass": gate4_pass,
         "example_finding": finding_dict,
-        "n_epochs": int(n),
+        "n_epochs": int(len(X)),
         "n_subjects": n_subjects,
     }
 
