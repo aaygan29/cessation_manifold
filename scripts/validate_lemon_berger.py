@@ -130,9 +130,9 @@ def epoch_features(data: np.ndarray, fs: float) -> dict:
 
     ap = aperiodic_features(x[np.newaxis, :], fs)
     comp = complexity_features(x[np.newaxis, :], fs)
-    exponent = float(ap.get("aperiodic_exponent", ap.get("exponent", np.nan)))
-    lz = float(comp.get("lempel_ziv", comp.get("lz", np.nan)))
-    dfa = float(comp.get("dfa_alpha", comp.get("dfa", np.nan)))
+    exponent = float(ap.get("aperiodic_exponent_mean", np.nan))
+    lz = float(comp.get("lempel_ziv_complexity", np.nan))
+    dfa = float(comp.get("dfa_exponent", np.nan))
 
     return {
         "alpha_abs_uv2": alpha_power,
