@@ -31,10 +31,12 @@ def cross_frequency_features(epoch: np.ndarray, sfreq: float) -> dict:
     transitions = []
     for ch in epoch:
         low = _bandpass(ch, sfreq, 4.0, 8.0)
-        high = _bandpass(ch, sfreq, 30.0, min(45.0, sfreq / 2.0 - 1e-3))
-        phase = np.angle(hilbert(low))
-        amp = np.abs(hilbert(high))
-        pac_vals.append(_modulation_index(phase, amp))
+        high_band_hi = min(45.0, sfreq / 2.0 - 1e-3)
+        if high_band_hi > 30.5:
+            high = _bandpass(ch, sfreq, 30.0, high_band_hi)
+            phase = np.angle(hilbert(low))
+            amp = np.abs(hilbert(high))
+            pac_vals.append(_modulation_index(phase, amp))
 
         alpha = _bandpass(ch, sfreq, 8.0, 12.0)
         env = np.abs(hilbert(alpha))

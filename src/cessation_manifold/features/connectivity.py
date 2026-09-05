@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import numpy as np
 from scipy.signal import hilbert
+from math import comb
 from sklearn.metrics import mutual_info_score
 
 from cessation_manifold.preprocessing.robustness import ensure_feature_dict_finite, sanitize_epoch
@@ -49,10 +50,25 @@ def connectivity_features(epoch: np.ndarray, sfreq: float, max_pairs: int = 64) 
         }
         return ensure_feature_dict_finite(feats)[0]
 
-    pairs = [(i, j) for i in range(n_channels) for j in range(i + 1, n_channels)]
-    if len(pairs) > max_pairs:
-        idx = np.linspace(0, len(pairs) - 1, max_pairs, dtype=int)
-        pairs = [pairs[k] for k in idx]
+    total_pairs = comb(n_channels, 2)
+    if total_pairs <= max_pairs:
+        pairs = [(i, j) for i in range(n_channels) for j in range(i + 1, n_channels)]
+    else:
+        target = max(1, max_pairs)
+        pairs = []
+        step = max(total_pairs // target, 1)
+        pair_index = 0
+        next_pick = 0
+        for i in range(n_channels):
+            for j in range(i + 1, n_channels):
+                if pair_index >= next_pick:
+                    pairs.append((i, j))
+                    next_pick += step
+                    if len(pairs) >= target:
+                        break
+                pair_index += 1
+            if len(pairs) >= target:
+                break
 
     wsmi_vals = []
     pli_vals = []

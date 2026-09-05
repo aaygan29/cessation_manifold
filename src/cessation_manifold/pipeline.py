@@ -231,7 +231,7 @@ def _centroid_stability_bootstrap(Xr: np.ndarray, labels: np.ndarray, subject_id
 
 
 def run_synthetic_pipeline(config: dict, seed: int | None = None) -> dict:
-    """Runs Gates 1, 3, 4 on synthetic Kuramoto data and returns a results dict.
+    """Runs Gates 1, 3, 4 on configured synthetic model data and returns a results dict.
 
     `seed` overrides `config["synthetic"]["seed"]` when given, so a seed sweep
     does not need to hand-edit config files."""
@@ -356,7 +356,6 @@ def run_synthetic_pipeline(config: dict, seed: int | None = None) -> dict:
 
     provenance_config = {"synthetic": cfg}
     state_arr = np.array(all_states, dtype=object)
-    test_blocks = split["blocks"][split["test"]]
     per_subject_coverage = {}
     per_session_coverage = {}
     per_state_coverage = {}

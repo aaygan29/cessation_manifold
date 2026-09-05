@@ -339,7 +339,8 @@ def simulate_synthetic_eeg(
         return simulate_neural_mass_eeg(**kwargs)
     if model in {"thalamo_cortical", "thalamocortical"}:
         return simulate_thalamocortical_eeg(**kwargs)
-    raise ValueError(f"unknown synthetic model {model!r}")
+    supported = ("kuramoto", "neural_mass", "thalamo_cortical")
+    raise ValueError(f"unknown synthetic model {model!r}; supported models: {', '.join(supported)}")
 
 
 def simulate_subject_sessions(
