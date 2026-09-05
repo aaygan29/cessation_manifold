@@ -6,7 +6,7 @@ It is designed to (1) validate feature/manifold machinery on synthetic and contr
 
 ## Architecture
 1. **Input layer**
-   - Synthetic: `src/cessation_manifold/io/synthetic.py`
+   - Synthetic: `src/cessation_manifold/io/synthetic.py` (Kuramoto + neural-mass + thalamo-cortical benchmarks)
    - Real BIDS: `src/cessation_manifold/io/bids_loader.py::load_bids_eeg`
    - Uploaded EEG: `src/cessation_manifold/io/bids_loader.py::load_uploaded_eeg`
 2. **Preprocessing**
@@ -19,6 +19,8 @@ It is designed to (1) validate feature/manifold machinery on synthetic and contr
    - Complexity: `features/complexity.py`
    - Criticality: `features/criticality.py`
    - Microstates: `features/microstates.py`
+   - Connectivity / information-exchange proxies: `features/connectivity.py`
+   - Cross-frequency and state-transition dynamics: `features/cross_frequency.py`
 4. **Embedding and distance**
    - Manifold fit/transform: `embed/manifold.py`
    - Distance to cessation centroid: `embed/distance.py`
@@ -51,12 +53,18 @@ For real uploaded EEG, output explicitly includes:
 - Block/session-aware splitting replaces random epoch-level splitting.
 - Adaptive fold sizing enforces larger calibration/test partitions (minimum 50 when enough epochs exist).
 - Finite-sample interval inflation is applied to reduce undercoverage under heterogeneous block structure.
+- Conditional coverage is reported per subject, session, and state with subgroup abstention flags.
+
+### Mathematical diagnostics
+- Synthetic parameter-recovery diagnostics quantify collapse vs non-collapse order-parameter separation.
+- Bootstrap centroid-drift diagnostics estimate manifold anchor stability under subject resampling.
+- Train/calibration/test distribution-shift summaries are logged for calibration stress-testing.
 
 ## Honest Scope Statements
 - **Proven now**: machinery robustness on synthetic data; real-data feature-stack behavior on control EEG pathways.
 - **Not proven now**: clinical cessation detection claims without cessation-labeled datasets and adjudication.
 
-## References (theory + EEG practice)
+## References (peer-reviewed)
 - Angelopoulos, A. N., & Bates, S. (2021). *A Gentle Introduction to Conformal Prediction and Distribution-Free Uncertainty Quantification*. arXiv:2107.07511.
 - Papadopoulos, H., Nikolopoulos, K., & Vovk, V. (2021). Conformal Prediction for Time Series. In *Conformal Prediction for Reliable Machine Learning*. Elsevier. https://doi.org/10.1016/B978-0-12-809715-7.00020-9
 - Barber, R. F., Candes, E., Ramdas, A., & Tibshirani, R. J. (2023). Conformal prediction with conditional guarantees. *JRSS Series B*. https://doi.org/10.1093/jrsssb/qkad020
@@ -64,3 +72,7 @@ For real uploaded EEG, output explicitly includes:
 - Schreiber, T., & Schmitz, A. (1996). Improved surrogate data for nonlinearity tests. *Phys Rev Lett*, 77(4), 635-638. https://doi.org/10.1103/PhysRevLett.77.635
 - Pernet, C. R., et al. (2018). Best Practices in Data Analysis and Sharing in Neuroimaging using MEEG. *NeuroImage*. https://doi.org/10.1016/j.neuroimage.2017.05.033
 - Roy, Y., et al. (2019). Deep learning-based electroencephalography analysis: a systematic review. *J Neural Eng*. https://doi.org/10.1088/1741-2552/ab260c
+
+## References (preprints)
+- Toker, D., et al. (2023). *Criticality of resting-state EEG predicts perturbational complexity and level of consciousness during anesthesia*. bioRxiv 2023.10.26.564247. https://www.biorxiv.org/content/10.1101/2023.10.26.564247v1
+- Zarka, D., et al. (2026). *EEG brain reconfiguration during meditation-induced extended cessation of consciousness*. bioRxiv.

@@ -27,6 +27,9 @@ from .io.synthetic import simulate_subject_sessions
 from .features.aperiodic import aperiodic_features
 from .features.complexity import complexity_features
 from .features.criticality import criticality_features
+from .features.connectivity import connectivity_features
+from .features.cross_frequency import cross_frequency_features
+from .features.microstates import fit_microstate_maps, microstate_features
 from .features.surrogates import surrogate_epoch
 from .embed.manifold import fit_manifold, transform
 from .embed.distance import distance_from_cessation
@@ -63,7 +66,23 @@ def _epoch_the_session(session, epoch_len_s: float = 5.0):
     return epochs, np.array(labels, dtype=bool), np.array(fractions, dtype=float)
 
 
-def extract_features(epoch: np.ndarray, sfreq: float, preprocessing_config: dict | None = None) -> dict:
+def _fit_microstate_maps_from_epochs(epochs: list[np.ndarray], n_states: int, seed: int) -> np.ndarray | None:
+    if not epochs:
+        return None
+    arr = np.asarray(epochs, dtype=float)
+    try:
+        maps, _ = fit_microstate_maps(arr, n_states=n_states, seed=seed)
+        return maps
+    except Exception:
+        return None
+
+
+def extract_features(
+    epoch: np.ndarray,
+    sfreq: float,
+    preprocessing_config: dict | None = None,
+    microstate_maps: np.ndarray | None = None,
+) -> dict:
     preprocessing_config = preprocessing_config or {}
     sanitized = sanitize_epoch(epoch, min_samples=max(16, int(sfreq // 2)))
     epoch = sanitized.epoch
@@ -80,6 +99,10 @@ def extract_features(epoch: np.ndarray, sfreq: float, preprocessing_config: dict
     feats.update(aperiodic_features(epoch, sfreq))
     feats.update(complexity_features(epoch, sfreq))
     feats.update(criticality_features(epoch, sfreq))
+    feats.update(connectivity_features(epoch, sfreq))
+    feats.update(cross_frequency_features(epoch, sfreq))
+    if microstate_maps is not None:
+        feats.update(microstate_features(epoch, microstate_maps))
     return ensure_feature_dict_finite(feats)[0]
 
 
@@ -115,6 +138,8 @@ def _regime_icc_audit(cfg: dict, seed: int, n_subjects: int, n_sessions: int, sf
                 n_sessions=n_sessions,
                 regime=regime,
                 base_seed=seed + 100 * s + 20_000 * regime_idx,
+                model=cfg.get("model", "kuramoto"),
+                model_kwargs=cfg.get("model_kwargs", {}),
                 n_seconds=n_seconds,
                 sfreq=sfreq,
             )
@@ -139,6 +164,72 @@ def _regime_icc_audit(cfg: dict, seed: int, n_subjects: int, n_sessions: int, sf
     return out
 
 
+def _distribution_shift_diagnostics(X: np.ndarray, y: np.ndarray, split: dict) -> dict:
+    train, calib, test = split["train"], split["calib"], split["test"]
+
+    def _safe_mean(v):
+        return float(np.nanmean(v)) if len(v) else 0.0
+
+    x_train_mean = _safe_mean(X[train])
+    x_calib_mean = _safe_mean(X[calib])
+    x_test_mean = _safe_mean(X[test])
+    y_train_mean = _safe_mean(y[train])
+    y_calib_mean = _safe_mean(y[calib])
+    y_test_mean = _safe_mean(y[test])
+
+    return {
+        "x_global_mean_shift_train_calib": float(abs(x_train_mean - x_calib_mean)),
+        "x_global_mean_shift_train_test": float(abs(x_train_mean - x_test_mean)),
+        "y_mean_shift_train_calib": float(abs(y_train_mean - y_calib_mean)),
+        "y_mean_shift_train_test": float(abs(y_train_mean - y_test_mean)),
+    }
+
+
+def _parameter_recovery_diagnostics(sessions: list) -> dict:
+    if not sessions:
+        return {"available": False}
+    aligned = []
+    for sess in sessions:
+        if sess.collapse_mask.any():
+            aligned.append(
+                float(np.mean(sess.order_parameter[sess.collapse_mask]) - np.mean(sess.order_parameter[~sess.collapse_mask]))
+            )
+    if not aligned:
+        return {"available": False, "reason": "no collapse windows"}
+    return {
+        "available": True,
+        "collapse_order_parameter_delta_mean": float(np.mean(aligned)),
+        "collapse_order_parameter_delta_std": float(np.std(aligned)),
+        "n_sessions": int(len(aligned)),
+    }
+
+
+def _centroid_stability_bootstrap(Xr: np.ndarray, labels: np.ndarray, subject_ids: list[str], n_boot: int = 100, seed: int = 0) -> dict:
+    if len(Xr) == 0 or labels.sum() == 0:
+        return {"available": False}
+    rng = np.random.default_rng(seed)
+    subs = np.array(subject_ids, dtype=object)
+    unique_subs = np.unique(subs)
+    anchor = Xr[labels].mean(axis=0)
+    drifts = []
+    for _ in range(n_boot):
+        sampled = rng.choice(unique_subs, size=len(unique_subs), replace=True)
+        keep = np.isin(subs, sampled)
+        if keep.sum() <= 1 or labels[keep].sum() == 0:
+            continue
+        c = Xr[keep][labels[keep]].mean(axis=0)
+        drifts.append(float(np.linalg.norm(c - anchor)))
+    if not drifts:
+        return {"available": False}
+    return {
+        "available": True,
+        "bootstrap_centroid_drift_mean": float(np.mean(drifts)),
+        "bootstrap_centroid_drift_ci95_lo": float(np.percentile(drifts, 2.5)),
+        "bootstrap_centroid_drift_ci95_hi": float(np.percentile(drifts, 97.5)),
+        "n_boot": int(n_boot),
+    }
+
+
 def run_synthetic_pipeline(config: dict, seed: int | None = None) -> dict:
     """Runs Gates 1, 3, 4 on synthetic Kuramoto data and returns a results dict.
 
@@ -150,31 +241,43 @@ def run_synthetic_pipeline(config: dict, seed: int | None = None) -> dict:
     sfreq = cfg.get("sfreq", 250.0)
     n_seconds = cfg.get("n_seconds", 60.0)
     seed = cfg.get("seed", 0) if seed is None else seed
+    model_name = cfg.get("model", "kuramoto")
+    model_kwargs = cfg.get("model_kwargs", {})
     preprocessing_cfg = config.get("preprocessing", {})
     conformal_cfg = config.get("conformal", {})
 
     # --- Gate 1: within-subject reproducibility across synthetic "sessions" ---
     all_epochs, all_labels, all_fractions, subject_ids, session_ids = [], [], [], [], []
+    all_states = []
+    collapsed_sessions = []
     for s in range(n_subjects):
         sessions = simulate_subject_sessions(
             subject_id=f"synthsub-{s:02d}",
             n_sessions=n_sessions,
             regime="collapsed",
             base_seed=seed + 100 * s,
+            model=model_name,
+            model_kwargs=model_kwargs,
             n_seconds=n_seconds,
             sfreq=sfreq,
         )
         for sess in sessions:
+            collapsed_sessions.append(sess)
             eps, labels, fractions = _epoch_the_session(sess)
             all_epochs.extend(eps)
             all_labels.extend(labels)
             all_fractions.extend(fractions)
             subject_ids.extend([sess.subject_id] * len(eps))
             session_ids.extend([sess.session_id] * len(eps))
+            all_states.extend(["collapsed_like" if x else "noncollapsed_like" for x in labels])
     all_labels = np.array(all_labels)
     all_fractions = np.array(all_fractions, dtype=float)
+    microstate_n_states = int(preprocessing_cfg.get("microstate_n_states", 4))
+    microstate_maps = _fit_microstate_maps_from_epochs(all_epochs, n_states=microstate_n_states, seed=seed)
 
-    feature_dicts = [extract_features(ep, sfreq, preprocessing_config=preprocessing_cfg) for ep in all_epochs]
+    feature_dicts = [
+        extract_features(ep, sfreq, preprocessing_config=preprocessing_cfg, microstate_maps=microstate_maps) for ep in all_epochs
+    ]
     X, feature_names = features_to_matrix(feature_dicts)
 
     model, Xr = fit_manifold(X, all_labels, feature_names, seed=seed)
@@ -207,7 +310,10 @@ def run_synthetic_pipeline(config: dict, seed: int | None = None) -> dict:
 
     # --- Gate 3: surrogates must break the score ---
     surrogate_epochs = [surrogate_epoch(ep, method="iaaft", seed=seed + i) for i, ep in enumerate(all_epochs[:60])]
-    surr_feature_dicts = [extract_features(ep, sfreq) for ep in surrogate_epochs]
+    surr_feature_dicts = [
+        extract_features(ep, sfreq, preprocessing_config=preprocessing_cfg, microstate_maps=microstate_maps)
+        for ep in surrogate_epochs
+    ]
     Xs, _ = features_to_matrix(surr_feature_dicts)
     Xs_r = transform(model, Xs)
     dist_surr = distance_from_cessation(Xs_r, model.cessation_centroid)
@@ -221,7 +327,13 @@ def run_synthetic_pipeline(config: dict, seed: int | None = None) -> dict:
     # on X gave coverage 1.0 because the target was a near-deterministic function
     # of the inputs (target leakage); collapse_fraction is an independent label.
     y = all_fractions
-    block_structure = {"subject": np.array(subject_ids), "session": np.array(session_ids)}
+    epoch_index = np.arange(len(X))
+    temporal_blocks = (epoch_index // max(1, int(conformal_cfg.get("temporal_block_size", 10)))).astype(int)
+    block_structure = {
+        "subject": np.array(subject_ids),
+        "session": np.array(session_ids),
+        "timeblock": temporal_blocks,
+    }
     predictor = AdaptiveConformalPredictor(
         n_epochs=len(X),
         block_structure=block_structure,
@@ -241,6 +353,40 @@ def run_synthetic_pipeline(config: dict, seed: int | None = None) -> dict:
     gate4_pass = bool(coverage >= predictor.target_coverage - 0.05)
 
     provenance_config = {"synthetic": cfg}
+    state_arr = np.array(all_states, dtype=object)
+    test_blocks = split["blocks"][split["test"]]
+    per_subject_coverage = {}
+    per_session_coverage = {}
+    per_state_coverage = {}
+    covered_test = (y[split["test"]] >= coverage_eval["lower"]) & (y[split["test"]] <= coverage_eval["upper"])
+    for key, labels in (
+        ("subject", np.array(subject_ids, dtype=object)[split["test"]]),
+        ("session", np.array(session_ids, dtype=object)[split["test"]]),
+        ("state", state_arr[split["test"]]),
+    ):
+        bucket = {}
+        for label in np.unique(labels):
+            mask = labels == label
+            bucket[str(label)] = float(covered_test[mask].mean())
+        if key == "subject":
+            per_subject_coverage = bucket
+        elif key == "session":
+            per_session_coverage = bucket
+        else:
+            per_state_coverage = bucket
+
+    subgroup_floor = predictor.target_coverage - 0.05
+    subgroup_abstentions = {
+        "subject": sorted([k for k, v in per_subject_coverage.items() if v < subgroup_floor]),
+        "session": sorted([k for k, v in per_session_coverage.items() if v < subgroup_floor]),
+        "state": sorted([k for k, v in per_state_coverage.items() if v < subgroup_floor]),
+    }
+
+    synthetic_validity = {
+        "parameter_recovery": _parameter_recovery_diagnostics(collapsed_sessions),
+        "centroid_stability": _centroid_stability_bootstrap(Xr, all_labels, subject_ids, n_boot=100, seed=seed),
+    }
+    split_shift = _distribution_shift_diagnostics(X, y, split)
     try:
         point, lo, hi = predictor.predict_interval(X[split["test"]][:1])
         finding = gate(
@@ -274,9 +420,24 @@ def run_synthetic_pipeline(config: dict, seed: int | None = None) -> dict:
         "gate4_conformal_coverage": coverage,
         "gate4_block_coverage": coverage_eval["block_coverage"],
         "gate4_diagnostics": predictor.diagnostics_,
+        "gate4_conditional_coverage": {
+            "subject": per_subject_coverage,
+            "session": per_session_coverage,
+            "state": per_state_coverage,
+            "test_block": coverage_eval["per_block_coverage"],
+        },
+        "gate4_subgroup_abstentions": subgroup_abstentions,
+        "gate4_subgroup_pass": bool(
+            not subgroup_abstentions["subject"] and not subgroup_abstentions["session"] and not subgroup_abstentions["state"]
+        ),
+        "distribution_shift_diagnostics": split_shift,
         "gate4_unstable_for_review": not predictor.diagnostics_.get("threshold_stable", True),
         "gate4_pass": gate4_pass,
         "example_finding": finding_dict,
+        "synthetic_model": model_name,
+        "synthetic_model_params": model_kwargs,
+        "synthetic_validity": synthetic_validity,
+        "microstate_maps_available": bool(microstate_maps is not None),
         "n_epochs": int(len(X)),
         "n_subjects": n_subjects,
     }
@@ -307,7 +468,12 @@ def run_real_data_pipeline(config: dict, eeg_path: str, subject_id: str = "uploa
     epochs = mne.make_fixed_length_epochs(
         raw_clean, duration=float(data_cfg.get("epoch_length_s", 5.0)), preload=True, verbose=False
     )
-    feature_dicts = [extract_features(ep, loaded.sfreq, preprocessing_cfg) for ep in epochs.get_data()]
+    epoch_data = list(epochs.get_data())
+    microstate_n_states = int(preprocessing_cfg.get("microstate_n_states", 4))
+    microstate_maps = _fit_microstate_maps_from_epochs(epoch_data, n_states=microstate_n_states, seed=int(preprocessing_cfg.get("seed", 0)))
+    feature_dicts = [
+        extract_features(ep, loaded.sfreq, preprocessing_cfg, microstate_maps=microstate_maps) for ep in epoch_data
+    ]
     X, names = features_to_matrix(feature_dicts)
     finite_matrix = np.isfinite(X).all()
     return {
@@ -324,6 +490,7 @@ def run_real_data_pipeline(config: dict, eeg_path: str, subject_id: str = "uploa
         "artifact_provenance": provenance,
         "claim_scope": "feature-validation-only",
         "claim_note": "Cessation claims require cessation-labeled EEG and independent clinical adjudication.",
+        "microstate_maps_available": bool(microstate_maps is not None),
     }
 
 
@@ -337,11 +504,20 @@ def run_gate2(config: dict, real_control_features: np.ndarray | None = None) -> 
     sfreq = cfg.get("sfreq", 250.0)
     n_seconds = cfg.get("n_seconds", 60.0)
     seed = cfg.get("seed", 0)
+    model_name = cfg.get("model", "kuramoto")
+    model_kwargs = cfg.get("model_kwargs", {})
 
     collapsed_epochs, collapsed_labels = [], []
     for s in range(3):
         sess = simulate_subject_sessions(
-            f"anchor-{s}", n_sessions=1, regime="collapsed", base_seed=seed + s, n_seconds=n_seconds, sfreq=sfreq
+            f"anchor-{s}",
+            n_sessions=1,
+            regime="collapsed",
+            base_seed=seed + s,
+            model=model_name,
+            model_kwargs=model_kwargs,
+            n_seconds=n_seconds,
+            sfreq=sfreq,
         )[0]
         eps, labels, _fractions = _epoch_the_session(sess)
         collapsed_epochs.extend(eps)
@@ -349,12 +525,21 @@ def run_gate2(config: dict, real_control_features: np.ndarray | None = None) -> 
     collapsed_labels = np.array(collapsed_labels, dtype=bool)
 
     baseline_sess = simulate_subject_sessions(
-        "baseline-critical", n_sessions=1, regime="critical", base_seed=seed + 500, n_seconds=n_seconds, sfreq=sfreq
+        "baseline-critical",
+        n_sessions=1,
+        regime="critical",
+        base_seed=seed + 500,
+        model=model_name,
+        model_kwargs=model_kwargs,
+        n_seconds=n_seconds,
+        sfreq=sfreq,
     )[0]
     baseline_epochs, _, _ = _epoch_the_session(baseline_sess)
 
-    anchor_feats = [extract_features(ep, sfreq) for ep in collapsed_epochs]
-    baseline_feats = [extract_features(ep, sfreq) for ep in baseline_epochs]
+    all_eps = collapsed_epochs + baseline_epochs
+    ms_maps = _fit_microstate_maps_from_epochs(all_eps, n_states=4, seed=seed)
+    anchor_feats = [extract_features(ep, sfreq, microstate_maps=ms_maps) for ep in collapsed_epochs]
+    baseline_feats = [extract_features(ep, sfreq, microstate_maps=ms_maps) for ep in baseline_epochs]
 
     all_dicts = anchor_feats + baseline_feats
     X, names = features_to_matrix(all_dicts)

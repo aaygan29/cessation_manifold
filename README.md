@@ -9,9 +9,10 @@ EEG cessation-detection apparatus with conformal uncertainty quantification.
 
 ## What is currently proven
 - Synthetic pipeline stability checks are implemented across seeds and gates.
+- Synthetic engine supports multiple biophysical scaffolds (Kuramoto, neural-mass-inspired, thalamo-cortical proxy).
 - Gate 4 now uses adaptive, block-aware conformal splitting (session-aware) instead of random epoch splitting.
 - Real-data ingestion path accepts uploaded EEG (MNE-readable formats) and reports artifact rejection and feature reliability.
-- Feature extractors run behind explicit NaN/Inf sanitization guards.
+- Feature extractors run behind explicit NaN/Inf sanitization guards and now include connectivity/cross-frequency families.
 
 ## What is not yet proven
 - Actual cessation detection on real cessation-labeled EEG cohorts is **not established** here.

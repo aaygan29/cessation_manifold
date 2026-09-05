@@ -4,3 +4,5 @@ synthetic:
   sfreq: 250.0
   n_seconds: 120.0
   seed: 0
+  model: kuramoto
+  model_kwargs: {}

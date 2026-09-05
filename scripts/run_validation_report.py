@@ -54,6 +54,15 @@ def _summarize_metric(values: list[float], ci: float, seed: int = 0) -> dict:
     }
 
 
+def _cohens_d(a: list[float], b: list[float]) -> float:
+    xa = np.asarray(a, dtype=float)
+    xb = np.asarray(b, dtype=float)
+    va = float(xa.var(ddof=1)) if len(xa) > 1 else 0.0
+    vb = float(xb.var(ddof=1)) if len(xb) > 1 else 0.0
+    pooled = np.sqrt(max(((len(xa) - 1) * va + (len(xb) - 1) * vb) / max(len(xa) + len(xb) - 2, 1), 1e-12))
+    return float((xa.mean() - xb.mean()) / pooled)
+
+
 def _ablation_configs(config: dict, ablations: list[str]) -> dict:
     base = json.loads(json.dumps(config))
     generated = {}
@@ -82,6 +91,7 @@ def run_validation_report(
     per_seed = []
     for seed in range(n_seeds):
         result = run_synthetic_pipeline(config, seed=seed)
+        subgroup_cov = result.get("gate4_conditional_coverage", {}).get("state", {})
         per_seed.append(
             {
                 "seed": seed,
@@ -91,6 +101,17 @@ def run_validation_report(
                 "gate4_block_coverage": float(result["gate4_block_coverage"]),
                 "gate4_unstable_for_review": bool(result.get("gate4_unstable_for_review", False)),
                 "gate3_pass": bool(result["gate3_pass"]),
+                "gate4_subgroup_pass": bool(result.get("gate4_subgroup_pass", True)),
+                "gate3_surrogate_mean_distance": float(result["gate3_surrogate_mean_distance"]),
+                "gate3_real_mean_distance": float(result["gate3_real_mean_distance"]),
+                "centroid_drift_mean": float(
+                    result.get("synthetic_validity", {}).get("centroid_stability", {}).get("bootstrap_centroid_drift_mean", 0.0)
+                ),
+                "state_coverage_min": float(min(subgroup_cov.values())) if subgroup_cov else float(result["gate4_conformal_coverage"]),
+                "distribution_shift_train_test": float(
+                    result.get("distribution_shift_diagnostics", {}).get("y_mean_shift_train_test", 0.0)
+                ),
+                "synthetic_model": result.get("synthetic_model", "kuramoto"),
             }
         )
 
@@ -104,6 +125,7 @@ def run_validation_report(
 
     unstable = [row["seed"] for row in per_seed if row["gate4_unstable_for_review"]]
     failed_gate1 = [row["seed"] for row in per_seed if not row["gate1_pass"]]
+    failed_subgroup = [row["seed"] for row in per_seed if not row["gate4_subgroup_pass"]]
     ablation_results = {}
     for name, ablated_config in _ablation_configs(config, ablations).items():
         result = run_synthetic_pipeline(ablated_config, seed=0)
@@ -127,8 +149,25 @@ def run_validation_report(
         "seed_flags": {
             "gate1_failed_seeds": failed_gate1,
             "gate4_unstable_seeds": unstable,
+            "gate4_subgroup_failed_seeds": failed_subgroup,
         },
         "ablations": ablation_results,
+        "benchmark_matrix": {
+            "gate1_pass_rate": float(np.mean([row["gate1_pass"] for row in per_seed])),
+            "gate3_pass_rate": float(np.mean([row["gate3_pass"] for row in per_seed])),
+            "gate4_pass_rate": float(np.mean([row["gate4_conformal_coverage"] >= 0.85 for row in per_seed])),
+            "gate4_subgroup_pass_rate": float(np.mean([row["gate4_subgroup_pass"] for row in per_seed])),
+            "coverage_stability_std": float(np.std([row["gate4_conformal_coverage"] for row in per_seed], ddof=1))
+            if len(per_seed) > 1
+            else 0.0,
+            "state_coverage_min_mean": float(np.mean([row["state_coverage_min"] for row in per_seed])),
+            "centroid_drift_mean": float(np.mean([row["centroid_drift_mean"] for row in per_seed])),
+            "distribution_shift_train_test_mean": float(np.mean([row["distribution_shift_train_test"] for row in per_seed])),
+            "surrogate_effect_size_d": _cohens_d(
+                [row["gate3_surrogate_mean_distance"] for row in per_seed],
+                [row["gate3_real_mean_distance"] for row in per_seed],
+            ),
+        },
         "claims": {
             "synthetic_feature_recovery": metrics["gate1_icc_point"]["claim_strength"],
             "conformal_coverage": metrics["gate4_conformal_coverage"]["claim_strength"],
