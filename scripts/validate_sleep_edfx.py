@@ -109,9 +109,9 @@ def extract_epoch_features(x: np.ndarray, sfreq: float) -> dict:
     comp = complexity_features(x[np.newaxis, :], sfreq)
     return {
         "alpha_rel": alpha_power / total,
-        "aperiodic_exponent": float(ap.get("aperiodic_exponent", ap.get("exponent", np.nan))),
-        "lempel_ziv": float(comp.get("lempel_ziv", comp.get("lz", np.nan))),
-        "dfa_alpha": float(comp.get("dfa_alpha", comp.get("dfa", np.nan))),
+        "aperiodic_exponent": float(ap.get("aperiodic_exponent_mean", np.nan)),
+        "lempel_ziv": float(comp.get("lempel_ziv_complexity", np.nan)),
+        "dfa_alpha": float(comp.get("dfa_exponent", np.nan)),
     }
 
 

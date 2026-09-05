@@ -9,6 +9,7 @@ pseudo-EEG channels. This is a scaffold for testing the pipeline's machinery,
 not a claim about the neural mechanism of cessation.
 """
 from __future__ import annotations
+import hashlib
 
 import numpy as np
 from dataclasses import dataclass
@@ -34,6 +35,11 @@ def _kuramoto_step(theta, omega, K, adj, dt):
     coupling = (adj * np.sin(diff)).sum(axis=1)
     dtheta = omega + (K / max(n, 1)) * coupling
     return theta + dt * dtheta
+
+
+def _stable_subject_offset(subject_id: str) -> int:
+    digest = hashlib.sha256(subject_id.encode("utf-8")).hexdigest()
+    return int(digest[:8], 16) % 997
 
 
 def simulate_kuramoto_eeg(
@@ -139,7 +145,7 @@ def simulate_subject_sessions(
     return [
         simulate_kuramoto_eeg(
             regime=regime,
-            seed=base_seed + 1000 * (i + 1) + hash(subject_id) % 997,
+            seed=base_seed + 1000 * (i + 1) + _stable_subject_offset(subject_id),
             subject_id=subject_id,
             session_id=f"ses-{i+1:02d}",
             **kwargs,
