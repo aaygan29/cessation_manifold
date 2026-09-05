@@ -244,7 +244,7 @@ def remove_artifacts_mne(
         excluded = [idx for idx, label in enumerate(labels["labels"]) if label in reject_labels]
         provenance["iclabel_available"] = True
         provenance["component_labels"] = labels["labels"]
-    except Exception as exc:
+    except ImportError as exc:
         provenance["iclabel_error"] = str(exc)
 
     if excluded:

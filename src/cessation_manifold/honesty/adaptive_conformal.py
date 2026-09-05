@@ -94,7 +94,7 @@ class AdaptiveConformalPredictor:
         counts = {"train": 0, "calib": 0, "test": 0}
         targets = {"train": sizes.n_train, "calib": sizes.n_calib, "test": sizes.n_test}
         for group in grouped:
-            bucket = max(targets, key=lambda name: targets[name] - counts[name])
+            bucket = max(targets, key=lambda name: (targets[name] - counts[name]) / max(targets[name], 1))
             if bucket == "train":
                 train_idx.extend(group.tolist())
             elif bucket == "calib":
@@ -145,12 +145,12 @@ class AdaptiveConformalPredictor:
         self.alpha_ = base_alpha
         cv_coverages, widths = self._crossval_coverages(preds, y_calib, calib_blocks)
         mean_cov = float(np.mean(cv_coverages))
+        finite_sample_inflation = 1.0 + min(0.08, 0.5 / max(np.sqrt(len(y_calib)), 1.0))
         alpha_adjust = 0.5 * max(0.0, self.target_coverage - mean_cov)
         self.alpha_ = float(np.clip(base_alpha - alpha_adjust, 0.01, base_alpha))
         _, tuned_widths = self._crossval_coverages(preds, y_calib, calib_blocks)
         conservative_width = self._quantile_width(residuals, self.alpha_)
         tuned_width = float(np.median(tuned_widths)) if tuned_widths else conservative_width
-        finite_sample_inflation = 1.0 + min(0.25, 2.0 / max(np.sqrt(len(y_calib)), 1.0))
         self.half_width_ = float(max(tuned_width, conservative_width) * finite_sample_inflation)
         p_values = 1.0 - (np.argsort(np.argsort(residuals)) + 1) / (len(residuals) + 1)
         hist, _ = np.histogram(p_values, bins=10, range=(0.0, 1.0))

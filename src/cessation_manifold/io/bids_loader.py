@@ -31,6 +31,25 @@ class LoadedRawEEG:
     source: str
 
 
+def _read_uploaded_raw(path: Path):
+    import mne
+
+    suffix = path.suffix.lower()
+    readers = {
+        ".fif": mne.io.read_raw_fif,
+        ".edf": mne.io.read_raw_edf,
+        ".bdf": mne.io.read_raw_bdf,
+        ".vhdr": mne.io.read_raw_brainvision,
+        ".set": mne.io.read_raw_eeglab,
+        ".gdf": mne.io.read_raw_gdf,
+    }
+    reader = readers.get(suffix)
+    if reader is None:
+        supported = ", ".join(sorted(readers))
+        raise ValueError(f"Unsupported EEG extension {suffix!r}; supported: {supported}")
+    return reader(path, preload=True, verbose=False)
+
+
 def load_bids_eeg(
     bids_root: str,
     subject: str,
@@ -96,16 +115,19 @@ def load_uploaded_eeg(
     if not path.exists():
         raise FileNotFoundError(f"EEG file {eeg_path!r} does not exist.")
 
-    import mne
-
-    raw = mne.io.read_raw(path, preload=True, verbose=False)
+    raw = _read_uploaded_raw(path)
     sfreq = float(raw.info.get("sfreq", 0.0))
     if sfreq <= 0:
         raise ValueError(f"Could not determine sampling rate from EEG file {eeg_path!r}.")
 
     nyquist = sfreq / 2.0
-    safe_h_freq = min(float(h_freq), max(l_freq + 0.5, nyquist - 1e-3))
-    if safe_h_freq <= l_freq:
+    upper_bound = nyquist - 1e-3
+    if upper_bound <= float(l_freq):
+        raise ValueError(
+            f"Invalid filter range for sfreq={sfreq}: Nyquist={nyquist:.3f}Hz cannot support l_freq={l_freq}."
+        )
+    safe_h_freq = min(float(h_freq), upper_bound)
+    if safe_h_freq <= float(l_freq):
         raise ValueError(f"Invalid filter range for sfreq={sfreq}: l_freq={l_freq}, h_freq={h_freq}")
     raw.filter(float(l_freq), safe_h_freq, verbose=False)
     raw.info["description"] = (
@@ -113,8 +135,6 @@ def load_uploaded_eeg(
     ).strip()
 
     session_id = path.stem
-    if "session" in raw.info and raw.info["session"]:
-        session_id = str(raw.info["session"])
 
     return LoadedRawEEG(
         raw=raw,

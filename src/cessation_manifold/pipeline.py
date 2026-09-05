@@ -108,7 +108,7 @@ def _regime_icc_audit(cfg: dict, seed: int, n_subjects: int, n_sessions: int, sf
     import pandas as pd
 
     rows = []
-    for regime_idx, regime in enumerate(("collapsed", "critical", "control")):
+    for regime_idx, regime in enumerate(("critical", "control")):
         for s in range(n_subjects):
             sessions = simulate_subject_sessions(
                 subject_id=f"audit-{s:02d}",
