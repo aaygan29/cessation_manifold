@@ -41,7 +41,7 @@ def test_expanded_feature_stack_contains_connectivity_and_cross_frequency():
     assert "wsmi_proxy_mean" in feats
     assert "phase_lag_index_mean" in feats
     assert "theta_gamma_pac_mi" in feats
-    assert "alpha_state_transition_count" in feats
+    assert "alpha_state_transition_rate_hz" in feats
 
 
 def test_pipeline_reports_new_validity_and_conditional_coverage_blocks():
@@ -85,6 +85,7 @@ def test_model_kwargs_are_forwarded_into_pipeline_metadata():
     result = run_synthetic_pipeline(config, seed=0)
     assert result["synthetic_model"] == "neural_mass"
     assert result["synthetic_model_params"]["collapse_gain"] == 4.25
+    assert "thalamic_drive_hz" in result["synthetic_model_params"]
 
 
 def test_model_kwargs_change_generated_session_params():

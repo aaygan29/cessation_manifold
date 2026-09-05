@@ -9,8 +9,12 @@ from cessation_manifold.preprocessing.robustness import ensure_feature_dict_fini
 
 def _bandpass(x: np.ndarray, sfreq: float, lo: float, hi: float) -> np.ndarray:
     nyq = sfreq / 2.0
+    if not np.isfinite(nyq) or nyq <= 0.2:
+        return np.asarray(x, dtype=float)
     lo = max(0.1, min(lo, nyq - 1e-3))
     hi = max(lo + 1e-3, min(hi, nyq - 1e-3))
+    if lo >= nyq or hi >= nyq or hi <= lo:
+        return np.asarray(x, dtype=float)
     b, a = butter(3, [lo / nyq, hi / nyq], btype="band")
     return filtfilt(b, a, x)
 
@@ -45,12 +49,12 @@ def cross_frequency_features(epoch: np.ndarray, sfreq: float) -> dict:
         starts = np.where(np.diff(np.concatenate([[0], state.astype(int), [0]])) == 1)[0]
         ends = np.where(np.diff(np.concatenate([[0], state.astype(int), [0]])) == -1)[0]
         runs = (ends - starts).astype(float)
-        dwell_vals.append(float(np.mean(runs)) if len(runs) else 0.0)
-        transitions.append(float(np.sum(np.diff(state.astype(int)) != 0)))
+        dwell_vals.append(float(np.mean(runs) / max(sfreq, 1e-12)) if len(runs) else 0.0)
+        transitions.append(float(np.sum(np.diff(state.astype(int)) != 0) / max(len(state) / max(sfreq, 1e-12), 1e-12)))
 
     feats = {
         "theta_gamma_pac_mi": float(np.mean(pac_vals)) if pac_vals else np.nan,
-        "alpha_state_dwell_samples": float(np.mean(dwell_vals)) if dwell_vals else np.nan,
-        "alpha_state_transition_count": float(np.mean(transitions)) if transitions else np.nan,
+        "alpha_state_dwell_seconds": float(np.mean(dwell_vals)) if dwell_vals else np.nan,
+        "alpha_state_transition_rate_hz": float(np.mean(transitions)) if transitions else np.nan,
     }
     return ensure_feature_dict_finite(feats)[0]

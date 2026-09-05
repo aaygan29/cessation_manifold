@@ -227,16 +227,18 @@ def _centroid_stability_bootstrap(Xr: np.ndarray, labels: np.ndarray, subject_id
     subs = np.array(subject_ids, dtype=object)
     unique_subs = np.unique(subs)
     anchor = Xr[labels].mean(axis=0)
+    subject_centroids = []
+    for sub in unique_subs:
+        idx = np.flatnonzero(subs == sub)
+        if len(idx) and labels[idx].sum() > 0:
+            subject_centroids.append(Xr[idx][labels[idx]].mean(axis=0))
+    if len(subject_centroids) < 2:
+        return {"available": False}
+    subject_centroids = np.vstack(subject_centroids)
     drifts = []
     for _ in range(n_boot):
-        sampled = rng.choice(unique_subs, size=len(unique_subs), replace=True)
-        sampled_indices = [np.flatnonzero(subs == sub) for sub in sampled]
-        if not sampled_indices:
-            continue
-        idx = np.concatenate(sampled_indices)
-        if len(idx) <= 1 or labels[idx].sum() == 0:
-            continue
-        c = Xr[idx][labels[idx]].mean(axis=0)
+        sampled = rng.choice(np.arange(len(subject_centroids)), size=len(subject_centroids), replace=True)
+        c = subject_centroids[sampled].mean(axis=0)
         drifts.append(float(np.linalg.norm(c - anchor)))
     if not drifts:
         return {"available": False}
@@ -374,6 +376,7 @@ def run_synthetic_pipeline(config: dict, seed: int | None = None) -> dict:
     gate4_pass = bool(coverage >= predictor.target_coverage - 0.05)
 
     provenance_config = {"synthetic": cfg}
+    realized_model_params = collapsed_sessions[0].model_params if collapsed_sessions and collapsed_sessions[0].model_params else {}
     state_arr = np.array(all_states, dtype=object)
     per_subject_coverage = {}
     per_session_coverage = {}
@@ -455,7 +458,7 @@ def run_synthetic_pipeline(config: dict, seed: int | None = None) -> dict:
         "gate4_pass": gate4_pass,
         "example_finding": finding_dict,
         "synthetic_model": model_name,
-        "synthetic_model_params": model_kwargs,
+        "synthetic_model_params": realized_model_params,
         "synthetic_validity": synthetic_validity,
         "microstate_maps_available": bool(microstate_maps is not None),
         "n_epochs": int(len(X)),
