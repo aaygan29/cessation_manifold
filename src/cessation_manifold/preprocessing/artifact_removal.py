@@ -1,4 +1,15 @@
-"""Lightweight, production-oriented EEG artifact attenuation helpers."""
+"""Lightweight, production-oriented EEG artifact attenuation helpers.
+
+References
+----------
+Pernet, C. R., et al. (2018). Best Practices in Data Analysis and Sharing
+in Neuroimaging using MEEG. NeuroImage.
+https://doi.org/10.1016/j.neuroimage.2017.05.033
+
+Roy, Y., et al. (2019). Deep learning-based electroencephalography analysis:
+a systematic review. Journal of Neural Engineering.
+https://doi.org/10.1088/1741-2552/ab260c
+"""
 from __future__ import annotations
 
 import logging
@@ -192,3 +203,53 @@ def remove_artifacts(
         provenance=provenance,
     )
     return ArtifactRemovalResult(current, artifact_mask, quality_metrics, provenance)
+
+
+def remove_artifacts_mne(
+    raw: "mne.io.BaseRaw",
+    random_state: int = 0,
+    reject_labels: tuple[str, ...] = (
+        "eye blink",
+        "muscle artifact",
+        "heart beat",
+        "channel noise",
+        "line noise",
+    ),
+) -> tuple["mne.io.BaseRaw", dict]:
+    """Artifact attenuation on MNE Raw with optional ICLabel component labels.
+
+    Uses MNE ICA and, when available, ``mne_icalabel`` for component
+    annotation. If ICLabel is unavailable, this function falls back to
+    returning the ICA-transformed data with no component exclusion and records
+    that limitation in provenance.
+    """
+    import mne
+    from mne.preprocessing import ICA
+
+    cleaned = raw.copy().load_data()
+    n_components = max(2, min(20, cleaned.info["nchan"] - 1))
+    ica = ICA(n_components=n_components, random_state=random_state, method="fastica", max_iter="auto")
+    ica.fit(cleaned, verbose=False)
+
+    excluded = []
+    provenance = {
+        "method": "mne-ica-iclabel",
+        "iclabel_available": False,
+        "n_components": int(n_components),
+    }
+    try:
+        from mne_icalabel import label_components
+
+        labels = label_components(cleaned, ica, method="iclabel")
+        excluded = [idx for idx, label in enumerate(labels["labels"]) if label in reject_labels]
+        provenance["iclabel_available"] = True
+        provenance["component_labels"] = labels["labels"]
+    except ImportError as exc:
+        provenance["iclabel_error"] = str(exc)
+
+    if excluded:
+        ica.exclude = excluded
+    cleaned = ica.apply(cleaned, verbose=False)
+    provenance["excluded_components"] = excluded
+    provenance["artifact_rejection_rate"] = float(len(excluded) / max(n_components, 1))
+    return cleaned, provenance

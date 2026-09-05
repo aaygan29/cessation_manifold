@@ -70,3 +70,15 @@ def test_tiny_fold_edge_cases_stay_finite():
     metrics = predictor.evaluate(X[split["test"]], y[split["test"]], split["blocks"][split["test"]])
     assert np.isfinite(metrics["coverage"])
     assert 0.0 <= metrics["block_coverage"] <= 1.0
+
+
+def test_large_epoch_budget_uses_minimum_50_test_samples():
+    X, y, subject_ids, session_ids = _grouped_regression(seed=7, n_blocks=40, block_size=20)
+    predictor = AdaptiveConformalPredictor(
+        n_epochs=len(X),
+        block_structure={"session": session_ids},
+        seed=7,
+    )
+    train, calib, test = predictor.split_indices(X, y)
+    assert len(test) >= 50
+    assert len(calib) >= 50
