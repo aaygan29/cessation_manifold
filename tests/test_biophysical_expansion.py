@@ -86,6 +86,7 @@ def test_model_kwargs_are_forwarded_into_pipeline_metadata():
     assert result["synthetic_model"] == "neural_mass"
     assert result["synthetic_model_params"]["collapse_gain"] == 4.25
     assert "thalamic_drive_hz" in result["synthetic_model_params"]
+    assert result["synthetic_model_params_by_session"]
 
 
 def test_model_kwargs_change_generated_session_params():

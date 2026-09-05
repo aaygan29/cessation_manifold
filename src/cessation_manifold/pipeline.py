@@ -376,7 +376,18 @@ def run_synthetic_pipeline(config: dict, seed: int | None = None) -> dict:
     gate4_pass = bool(coverage >= predictor.target_coverage - 0.05)
 
     provenance_config = {"synthetic": cfg}
-    realized_model_params = collapsed_sessions[0].model_params if collapsed_sessions and collapsed_sessions[0].model_params else {}
+    session_param_map = {
+        f"{sess.subject_id}:{sess.session_id}": (sess.model_params or {})
+        for sess in collapsed_sessions
+    }
+    realized_model_params = {}
+    if session_param_map:
+        first_key = next(iter(session_param_map))
+        first_params = session_param_map[first_key]
+        if all(params == first_params for params in session_param_map.values()):
+            realized_model_params = first_params
+        else:
+            realized_model_params = {"varies_by_session": True}
     state_arr = np.array(all_states, dtype=object)
     per_subject_coverage = {}
     per_session_coverage = {}
@@ -459,6 +470,7 @@ def run_synthetic_pipeline(config: dict, seed: int | None = None) -> dict:
         "example_finding": finding_dict,
         "synthetic_model": model_name,
         "synthetic_model_params": realized_model_params,
+        "synthetic_model_params_by_session": session_param_map,
         "synthetic_validity": synthetic_validity,
         "microstate_maps_available": bool(microstate_maps is not None),
         "n_epochs": int(len(X)),
