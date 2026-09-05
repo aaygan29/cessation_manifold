@@ -248,6 +248,7 @@ def run_synthetic_pipeline(config: dict, seed: int | None = None) -> dict:
 
     # --- Gate 1: within-subject reproducibility across synthetic "sessions" ---
     all_epochs, all_labels, all_fractions, subject_ids, session_ids = [], [], [], [], []
+    within_session_epoch_idx = []
     all_states = []
     collapsed_sessions = []
     for s in range(n_subjects):
@@ -269,6 +270,7 @@ def run_synthetic_pipeline(config: dict, seed: int | None = None) -> dict:
             all_fractions.extend(fractions)
             subject_ids.extend([sess.subject_id] * len(eps))
             session_ids.extend([sess.session_id] * len(eps))
+            within_session_epoch_idx.extend(list(range(len(eps))))
             all_states.extend(["collapsed_like" if x else "noncollapsed_like" for x in labels])
     all_labels = np.array(all_labels)
     all_fractions = np.array(all_fractions, dtype=float)
@@ -327,8 +329,8 @@ def run_synthetic_pipeline(config: dict, seed: int | None = None) -> dict:
     # on X gave coverage 1.0 because the target was a near-deterministic function
     # of the inputs (target leakage); collapse_fraction is an independent label.
     y = all_fractions
-    epoch_index = np.arange(len(X))
-    temporal_blocks = (epoch_index // max(1, int(conformal_cfg.get("temporal_block_size", 10)))).astype(int)
+    session_local_idx = np.array(within_session_epoch_idx, dtype=int)
+    temporal_blocks = (session_local_idx // max(1, int(conformal_cfg.get("temporal_block_size", 10)))).astype(int)
     block_structure = {
         "subject": np.array(subject_ids),
         "session": np.array(session_ids),

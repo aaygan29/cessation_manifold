@@ -48,3 +48,22 @@ def test_pipeline_reports_new_validity_and_conditional_coverage_blocks():
     assert "distribution_shift_diagnostics" in result
     assert "gate4_conditional_coverage" in result
     assert {"subject", "session", "state"} <= set(result["gate4_conditional_coverage"].keys())
+
+
+def test_model_kwargs_are_forwarded_into_pipeline_metadata():
+    config = {
+        "synthetic": {
+            "n_subjects": 2,
+            "n_sessions_per_subject": 2,
+            "sfreq": 80.0,
+            "n_seconds": 20.0,
+            "seed": 0,
+            "model": "neural_mass",
+            "model_kwargs": {"collapse_gain": 4.25},
+        },
+        "conformal": {"target_coverage": 0.9, "adaptive_sizing": True, "n_splits": 3},
+        "preprocessing": {"enabled": False},
+    }
+    result = run_synthetic_pipeline(config, seed=0)
+    assert result["synthetic_model"] == "neural_mass"
+    assert result["synthetic_model_params"]["collapse_gain"] == 4.25

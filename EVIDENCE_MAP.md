@@ -6,7 +6,7 @@ Structured literature-to-code mapping for biophysical and mathematical validity.
 
 | Area | Evidence | Module(s) |
 |---|---|---|
-| Perturbational complexity benchmark | Casali et al., 2013, Sci Transl Med, DOI: 10.1126/scitranslmed.3006294 | `/home/runner/work/cessation_manifold/cessation_manifold/src/cessation_manifold/features/complexity.py` |
+| Perturbational complexity benchmark | Casali et al., 2013, Sci Transl Med, DOI: 10.1126/scitranslmed.3006294 | `src/cessation_manifold/features/complexity.py` |
 | Fast PCIst methodology | Comolatti et al., 2019, Brain Stimulation, DOI: 10.1016/j.brs.2019.03.007 | `.../features/complexity.py`, `.../pipeline.py` |
 | Resting-state consciousness markers incl. wSMI family | Sitt et al., 2014, Brain, DOI: 10.1093/brain/awu141 | `.../features/connectivity.py`, `.../features/aperiodic.py`, `.../features/complexity.py` |
 | EEG microstate methodology | Michel & Koenig, 2018, NeuroImage, DOI: 10.1016/j.neuroimage.2017.11.062 | `.../features/microstates.py`, `.../pipeline.py` |

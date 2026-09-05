@@ -353,6 +353,11 @@ def simulate_subject_sessions(
 ) -> list:
     """Multiple synthetic sessions for one subject, for the Gate-1 dense-sampling check."""
     model_kwargs = model_kwargs or {}
+    overlap = set(model_kwargs).intersection(kwargs)
+    if overlap:
+        dup = ", ".join(sorted(overlap))
+        raise ValueError(f"duplicate synthetic model arguments provided in model_kwargs and kwargs: {dup}")
+    merged_kwargs = {**kwargs, **model_kwargs}
     sessions = []
     for i in range(n_sessions):
         sessions.append(
@@ -362,8 +367,7 @@ def simulate_subject_sessions(
                 seed=base_seed + 1000 * (i + 1) + _stable_subject_offset(subject_id),
                 subject_id=subject_id,
                 session_id=f"ses-{i+1:02d}",
-                **model_kwargs,
-                **kwargs,
+                **merged_kwargs,
             )
         )
     return sessions
