@@ -177,6 +177,50 @@ cessation event, which is useful for testing whether the manifold
 distance metric tracks a graded process and not only a binary
 in/out-of-cessation label.
 
+### Candidate note: bifurcation structure and hysteresis
+
+Solé R, Ruffini G, et al. 2026, "Large-Language Models as a Cognitive
+Virus", arXiv:2609.03344.
+
+This paper is not about brains. It is a mean-field model of LLM adoption
+and dependency in human populations, and its empirical grounding is
+usage/adoption data, not EEG or any neural measurement. It is cited here
+only for its dynamical-systems template, not as evidence about cessation,
+anesthesia, or sleep. The reason it is worth a note at all is that one of
+the coauthors, Ruffini (Neuroelectrics), works in EEG and brain-complexity
+research, so the bifurcation framing below comes out of that community's
+toolkit even though the paper itself applies it to a non-neural system.
+
+The model's individual-level transition between an "autonomous" and a
+"collapsed/offloaded" state is a saddle-node/transcritical bifurcation
+pair, and for a parameter range it is bistable: a one-dimensional
+effective potential has two wells, and the system sits in one or the
+other depending on history, not just on the instantaneous parameter
+value. Concretely, entry and exit are governed by different thresholds,
+with a hysteretic window 2sqrt(kappa*rho) < lambda < rho + kappa in
+which both states are locally stable. This is a template, not a
+transplant: it says that a "collapse" between two effective states does
+not have to have a single threshold at all, and offers a specific
+worked example (saddle-node/transcritical pair, two-well potential,
+history-dependent state) of what an asymmetric collapse looks like
+mathematically.
+
+That template is a plausible reason to question one thing this repo's
+synthetic validation currently does not test. `simulate_kuramoto_eeg`
+(`src/cessation_manifold/io/synthetic.py`) drives the network from
+`base_coupling` up to `collapse_coupling` and back down again within
+each collapse window, but the apparatus gates (`scripts/run_demo.py`,
+`scripts/run_seed_sweep.py`) have not been checked separately on the
+driven-down leg versus the recovery leg of that sweep. If the underlying
+dynamics were bistable in the way the cognitive-virus model's population
+is, distance-from-cessation could be history dependent, so the same
+coupling value could read differently depending on whether it was
+reached by collapsing or by recovering, and the readout's honesty gates
+should be able to say so rather than average over it. This is flagged as
+a v2 todo for the synthetic validation (test both sweep directions, not
+just the collapse direction), not as a claim that the current Kuramoto
+model already exhibits this asymmetry.
+
 ### Supporting methodology references
 
 Michel, C. M. & Koenig, T. 2018, "EEG microstates as a tool for studying
