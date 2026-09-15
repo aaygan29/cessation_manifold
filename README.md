@@ -68,7 +68,7 @@ for a real BIDS dataset is a config change, not a rewrite.
 | `configs/` | Per-dataset YAML (`synthetic.yaml`, `lemon.yaml`, `openneuro_meditation.yaml`). |
 | `data/README.md` | The dataset table: real URLs, licenses, fetch status, reachability notes. Start here for data. |
 | `PREREGISTRATION.md` | The kill-criteria gates and the rule that gate logic does not change once real data lands. |
-| `BACKGROUND.md` | Why cessation / anesthesia / sleep are grouped as graded-consciousness contrasts. |
+| `BACKGROUND.md` | Why cessation / anesthesia / sleep are grouped as graded-consciousness contrasts. Also notes a candidate follow-up: testing the synthetic Kuramoto collapse on both the driven-down and recovery sweep, in case distance-from-cessation is history dependent (see "Candidate note: bifurcation structure and hysteresis"). |
 
 ---
 
