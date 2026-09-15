@@ -2,9 +2,11 @@ cff-version: 1.2.0
 message: "If you use this software, please cite it as below."
 title: "cessation_manifold: a per-subject distance-from-cessation EEG readout"
 authors:
-  - name: "The authors"
+  - family-names: Gandhi
+    given-names: Aayush
 version: 0.1.0
 date-released: "2026-09-03"
+repository-code: "https://github.com/aaygan29/cessation_manifold"
 license: MIT
 references:
   - type: article
