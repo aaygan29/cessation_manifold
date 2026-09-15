@@ -5,7 +5,7 @@ description = "Per-subject distance-from-cessation EEG readout with conformal ho
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-authors = [{ name = "Aayush Gandhi" }]
+authors = [{ name = "The authors" }]
 dependencies = [
     "numpy>=1.24",
     "pandas>=2.0",

@@ -11,8 +11,7 @@ to that question. It builds the full pipeline, proves the machinery recovers
 known signals from real EEG, and refuses to report a cessation number until
 the anchoring data exists.
 
-Owner: Aayush Gandhi (`aaygan29`). License: MIT (downloaded data keeps its
-own license).
+License: MIT (downloaded data keeps its own license).
 
 ---
 
